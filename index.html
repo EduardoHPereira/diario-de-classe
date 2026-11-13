@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diário de Classe</title>
+  <link rel="stylesheet" href="estilo.css">
+
+  <!--
+    Bibliotecas vindas de CDN (versões fixas, para nada mudar sem querermos):
+      - pdf.js  : LÊ o PDF (equivale ao pdfplumber do diario.py)
+      - pdf-lib : ESCREVE no PDF (equivale ao reportlab + pypdf)
+    O atributo "integrity" é uma impressão digital do arquivo: se o CDN
+    entregar algo diferente, o navegador se recusa a rodar.
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"
+          integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"
+          integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI"
+          crossorigin="anonymous"></script>
+</head>
+<body>
+  <header class="topo">
+    <h1>Diário de Classe</h1>
+    <p class="aviso-privacidade">
+      Tudo roda no seu navegador. O PDF e os dados dos alunos <strong>nunca</strong> são enviados a lugar nenhum.
+    </p>
+  </header>
+
+  <main>
+    <!-- ============ 1. ARQUIVOS ============ -->
+    <section class="cartao">
+      <h2>1. Diário em branco e backup</h2>
+      <div class="linha-botoes">
+        <label class="botao principal">
+          Abrir PDF em branco…
+          <input type="file" id="arquivoPdf" accept="application/pdf,.pdf" hidden>
+        </label>
+        <span id="statusPdf" class="status">Nenhum PDF aberto.</span>
+      </div>
+      <div class="linha-botoes">
+        <button type="button" class="botao" id="btnExportar">Exportar backup (.json)</button>
+        <label class="botao">
+          Importar backup…
+          <input type="file" id="arquivoBackup" accept="application/json,.json" hidden>
+        </label>
+        <button type="button" class="botao perigo" id="btnLimpar">Começar do zero</button>
+      </div>
+      <p class="dica">O progresso é salvo automaticamente neste navegador. O PDF não fica salvo:
+        abra-o de novo quando for gerar o diário preenchido.</p>
+    </section>
+
+    <!-- ============ 2. CONFIGURAÇÕES ============ -->
+    <section class="cartao">
+      <h2>2. Configurações</h2>
+      <div class="grade-config">
+        <label>Peso da prova <input type="text" inputmode="decimal" id="cfgPesoProva"></label>
+        <label>Peso das atividades <input type="text" inputmode="decimal" id="cfgPesoAtiv"></label>
+        <label>Início do 2º bimestre <input type="date" id="cfgInicio2"></label>
+      </div>
+      <p class="dica">Média = (prova × peso da prova + atividades × peso das atividades) ÷ (soma dos pesos).
+        Aulas antes do início do 2º bimestre vão para o 1º. Cada dia tem 2 aulas (2 colunas no diário).</p>
+    </section>
+
+    <!-- ============ 3. DATAS E CONTEÚDO ============ -->
+    <section class="cartao">
+      <h2>3. Aulas (datas e conteúdo)</h2>
+      <div class="linha-botoes">
+        <input type="date" id="novaData">
+        <button type="button" class="botao" id="btnAddData">Adicionar data</button>
+      </div>
+      <details class="gerador">
+        <summary>Gerar várias datas de uma vez</summary>
+        <div class="linha-botoes">
+          <label>De <input type="date" id="gerDe"></label>
+          <label>até <input type="date" id="gerAte"></label>
+        </div>
+        <div class="linha-botoes" id="gerDias">
+          <!-- 0 = domingo ... 6 = sábado (padrão do JavaScript) -->
+          <label><input type="checkbox" value="1"> seg</label>
+          <label><input type="checkbox" value="2"> ter</label>
+          <label><input type="checkbox" value="3"> qua</label>
+          <label><input type="checkbox" value="4"> qui</label>
+          <label><input type="checkbox" value="5"> sex</label>
+          <label><input type="checkbox" value="6"> sáb</label>
+          <button type="button" class="botao" id="btnGerar">Gerar</button>
+        </div>
+      </details>
+      <p id="resumoBimestres" class="dica"></p>
+      <div id="listaAulas"></div>
+    </section>
+
+    <!-- ============ 4. CHAMADA ============ -->
+    <section class="cartao">
+      <h2>4. Chamada</h2>
+      <p class="dica">Clique na célula para alternar: vazio → C → F → CF → FC → vazio.
+        (CF = presente na 1ª aula e faltou na 2ª.) O botão “C” no cabeçalho marca presença em todos os vazios do dia.</p>
+      <div class="rolagem"><table id="tabelaChamada" class="tabela"></table></div>
+    </section>
+
+    <!-- ============ 5. NOTAS ============ -->
+    <section class="cartao">
+      <h2>5. Notas</h2>
+      <p class="dica">Aceita vírgula ou ponto (ex.: 7,5). Deixe em branco se ainda não tiver a nota.</p>
+      <div class="rolagem"><table id="tabelaNotas" class="tabela"></table></div>
+    </section>
+
+    <!-- ============ 6. GERAR ============ -->
+    <section class="cartao">
+      <h2>6. Gerar o diário preenchido</h2>
+      <button type="button" class="botao principal" id="btnGerarPdf">Gerar e baixar PDF</button>
+      <ul id="avisos" class="avisos"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+/* Cores definidas como "variáveis" (tokens) para facilitar o modo escuro */
+:root {
+  --fundo: #f4f5f7;
+  --cartao: #ffffff;
+  --texto: #1d2129;
+  --suave: #5f6673;
+  --borda: #d9dce1;
+  --destaque: #2457c5;
+  --destaque-texto: #ffffff;
+  --perigo: #b3261e;
+  --bim1: #eef3ff;
+  --bim2: #fff4e5;
+  --c: #d8f3dc;
+  --c-texto: #1b5e20;
+  --f: #fde0dc;
+  --f-texto: #a1180f;
+  --misto: #fff1c2;
+  --misto-texto: #6d4c00;
+  --erro: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #15171c;
+    --cartao: #1f2229;
+    --texto: #e7e9ee;
+    --suave: #9aa1ad;
+    --borda: #343843;
+    --destaque: #6c9bff;
+    --destaque-texto: #0b1020;
+    --perigo: #ff8a80;
+    --bim1: #1d2740;
+    --bim2: #3a2c17;
+    --c: #1e3b24;
+    --c-texto: #a5e3b0;
+    --f: #4a1f1c;
+    --f-texto: #ffb4ab;
+    --misto: #403516;
+    --misto-texto: #f3d77a;
+    --erro: #ff8a80;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.topo { padding: 20px 16px 4px; max-width: 1200px; margin: 0 auto; }
+.topo h1 { margin: 0 0 4px; font-size: 1.6rem; }
+.aviso-privacidade { margin: 0; color: var(--suave); }
+main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 40px; }
+
+.cartao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 14px 0;
+}
+.cartao h2 { margin: 0 0 10px; font-size: 1.1rem; }
+.dica { color: var(--suave); font-size: 0.88rem; margin: 6px 0; }
+.status { color: var(--suave); }
+
+.linha-botoes { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.botao {
+  display: inline-block;
+  padding: 7px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 7px;
+  background: var(--cartao);
+  color: var(--texto);
+  font: inherit;
+  cursor: pointer;
+}
+.botao:hover { border-color: var(--destaque); }
+.botao.principal { background: var(--destaque); color: var(--destaque-texto); border-color: var(--destaque); }
+.botao.perigo { color: var(--perigo); }
+
+input[type="text"], input[type="date"] {
+  font: inherit;
+  padding: 5px 7px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--fundo);
+  color: var(--texto);
+  max-width: 100%;
+}
+input.invalido { border-color: var(--erro); outline: 1px solid var(--erro); }
+
+.grade-config { display: flex; flex-wrap: wrap; gap: 14px; }
+.grade-config label { display: flex; flex-direction: column; gap: 3px; font-size: 0.9rem; }
+.grade-config input { width: 170px; }
+
+.gerador { margin: 8px 0; }
+.gerador summary { cursor: pointer; color: var(--destaque); }
+
+/* Lista de aulas (data + conteúdo) */
+.aula {
+  display: grid;
+  grid-template-columns: 34px 92px 46px 1fr 30px;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--borda);
+}
+.aula .num { color: var(--suave); text-align: right; }
+.aula .etiqueta { font-size: 0.75rem; border-radius: 4px; text-align: center; padding: 1px 0; }
+.aula input { width: 100%; }
+.bim1 { background: var(--bim1); }
+.bim2 { background: var(--bim2); }
+.remover {
+  border: none; background: none; color: var(--perigo);
+  cursor: pointer; font-size: 1.1rem;
+}
+@media (max-width: 560px) {
+  .aula { grid-template-columns: 28px 86px 1fr 28px; }
+  .aula .etiqueta { display: none; }
+}
+
+/* Tabelas com rolagem lateral (a página em si não rola para o lado) */
+.rolagem { overflow-x: auto; max-width: 100%; }
+.tabela { border-collapse: collapse; font-size: 0.85rem; }
+.tabela th, .tabela td { border: 1px solid var(--borda); padding: 2px 4px; text-align: center; }
+.tabela th { font-weight: 600; white-space: nowrap; }
+.tabela .ra { white-space: nowrap; }
+.tabela .nome { text-align: left; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+/* RA e nome "grudados" na esquerda enquanto rola para o lado */
+.tabela .fixo1, .tabela .fixo2 { position: sticky; background: var(--cartao); z-index: 1; }
+.tabela .fixo1 { left: 0; }
+.tabela .fixo2 { left: var(--larg-ra, 90px); }
+.tabela input[type="text"] { width: 62px; text-align: center; padding: 3px; }
+
+.celula {
+  width: 34px; height: 26px;
+  border: none; border-radius: 4px;
+  font: inherit; font-weight: 700;
+  background: transparent; color: var(--texto);
+  cursor: pointer;
+}
+.celula:hover { outline: 1px solid var(--destaque); }
+.celula.v-C { background: var(--c); color: var(--c-texto); }
+.celula.v-F { background: var(--f); color: var(--f-texto); }
+.celula.v-CF, .celula.v-FC { background: var(--misto); color: var(--misto-texto); }
+.mini { font-size: 0.7rem; padding: 0 4px; margin-top: 2px; }
+
+.avisos { margin: 10px 0 0; padding-left: 20px; }
+.avisos li { margin: 3px 0; }
+.avisos li.erro { color: var(--erro); }
