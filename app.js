@@ -4,13 +4,22 @@
  *
  * É a "tradução" do diario.py para JavaScript, rodando 100% no navegador.
  *
- * Organização deste arquivo (mesma ordem do diario.py):
+ * Organização deste arquivo:
  *   PARTE 0 — medidas do formulário (copiadas do diario.py)
  *   PARTE 1 — ler o PDF em branco (pdf.js no lugar do pdfplumber)
- *   PARTE 2 — o "estado": todos os dados que você digita, salvos no navegador
- *   PARTE 3 — calcular datas por bimestre, presenças e médias (como ler_planilha)
- *   PARTE 4 — desenhar os textos no PDF (pdf-lib no lugar do reportlab + pypdf)
- *   PARTE 5 — a tela: montar as tabelas e reagir aos cliques
+ *   PARTE 2 — o "estado": matérias, turmas e tudo o que você digita
+ *   PARTE 3 — guardar no navegador (localStorage + IndexedDB para os PDFs)
+ *   PARTE 4 — cálculos: datas por bimestre, presenças e médias (como ler_planilha)
+ *   PARTE 5 — desenhar os textos no PDF (pdf-lib no lugar do reportlab + pypdf)
+ *   PARTE 6 — gerar vários diários e salvar numa pasta
+ *   PARTE 7 — a tela: montar as tabelas e reagir aos cliques
+ *
+ * Como os dados se organizam:
+ *   MATÉRIA (ex.: Circuitos Elétricos)  -> uma aba na barra da esquerda
+ *     ├─ datas, conteúdos, pesos, início do 2º bimestre  (iguais para todas as turmas)
+ *     ├─ chamada e notas de cada aluno (pelo RA)
+ *     └─ TURMAS (ex.: GELE4N, GELE6N) -> cada uma tem o seu PDF em branco
+ *                                        e gera o SEU diário preenchido
  *
  * Ideia central (igual ao Python): NÃO apagamos nada do PDF original.
  * Só escrevemos os textos novos POR CIMA de cada página, como um carimbo.
@@ -55,8 +64,13 @@ const AULAS_POR_DIA = 2;
 // Ciclo do clique na célula da chamada
 const CICLO_CHAMADA = ["", "C", "F", "CF", "FC"];
 
-// Onde o progresso fica guardado no navegador (localStorage)
-const CHAVE_ARMAZENAMENTO = "diario-de-classe:v1";
+// Dias da semana para o gerador de datas (0 = domingo, padrão do JavaScript)
+const DIAS_SEMANA = [[1, "Segunda"], [2, "Terça"], [3, "Quarta"], [4, "Quinta"], [5, "Sexta"], [6, "Sábado"]];
+
+// Onde o progresso fica guardado no navegador
+const CHAVE_ARMAZENAMENTO = "diario-de-classe:v2";
+const CHAVE_ANTIGA_V1 = "diario-de-classe:v1"; // formato da 1ª versão (uma matéria só)
+const PASTA_PADRAO = "Diários Preenchidos - 2º bimestre";
 
 // O pdf.js faz o trabalho pesado numa "thread" separada (o worker).
 // Precisamos dizer onde está o arquivo dele (mesma versão do pdf.min.js).
@@ -130,11 +144,11 @@ function montarPalavras(conteudoTexto, pagina) {
       }
     }
   }
-  return { palavras, linhas: agruparTextoPorLinha(palavras) };
+  return { palavras, texto: juntarTexto(palavras) };
 }
 
 // Junta as palavras em texto corrido (como o extract_text do pdfplumber)
-function agruparTextoPorLinha(palavras) {
+function juntarTexto(palavras) {
   const porLinha = [];
   for (const p of palavras) {
     const ultima = porLinha[porLinha.length - 1];
@@ -147,7 +161,7 @@ function agruparTextoPorLinha(palavras) {
 /*
  * Equivale a ler_pdf_em_branco() do Python.
  * Devolve uma lista, uma entrada por página, por exemplo:
- *   { tipo: "frequencia", bimestre: 1, alunos: Map { "0252252010" => { topo: 124.7, nome: "DIEGO ..." } } }
+ *   { tipo: "frequencia", bimestre: 1, alunos: Map { "0000000001" => { topo: 124.7, nome: "FULANO ..." } } }
  *   { tipo: "conteudo",   bimestre: 1, alunos: Map {} }
  */
 async function lerPdfEmBranco(bytesPdf) {
@@ -160,7 +174,7 @@ async function lerPdfEmBranco(bytesPdf) {
     const pagina = await doc.getPage(n);
     // disableNormalization: não "arrumar" caracteres (ex.: manter o "º" como está)
     const conteudo = await pagina.getTextContent({ disableNormalization: true });
-    const { palavras, linhas: texto } = montarPalavras(conteudo, pagina);
+    const { palavras, texto } = montarPalavras(conteudo, pagina);
 
     // Mesmas regras do Python. (Aceitamos também "2°" com o símbolo de grau,
     // que é fácil de confundir com o "º" ordinal.)
@@ -192,67 +206,151 @@ async function lerPdfEmBranco(bytesPdf) {
   return paginas;
 }
 
+// Junta os alunos de todas as páginas (sem repetir), na ordem em que aparecem
+function alunosDoPdf(paginas) {
+  const alunos = new Map();
+  for (const pg of paginas) for (const [ra, { nome }] of pg.alunos) alunos.set(ra, nome);
+  return alunos;
+}
+
 
 // ===========================================================================
 // PARTE 2 — O ESTADO (tudo o que você digita)
 // ===========================================================================
 
 /*
- * Formato dos dados (é exatamente isto que vai para o backup .json):
+ * Formato dos dados (é isto que vai para o backup .json):
  * {
- *   versao: 1,
- *   config:    { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "2026-04-01" },
- *   alunos:    [ { ra: "0252252010", nome: "DIEGO ..." }, ... ],
- *   datas:     [ "2026-02-10", "2026-02-17", ... ],      // sempre em ordem
- *   presencas: { "0252252010": { "2026-02-10": "C", "2026-02-17": "CF" } },
- *   conteudos: { "2026-02-10": "Apresentação da disciplina" },
- *   notas:     { "0252252010": { p1: "7,5", a1: "8", p2: "", a2: "" } }
+ *   versao: 2,
+ *   materiaAtual: "id-da-matéria-aberta",
+ *   nomePasta: "Diários Preenchidos - 2º bimestre",
+ *   materias: [{
+ *     id, nome: "Circuitos Elétricos",
+ *     config:    { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "2026-04-01" },
+ *     turmas:    [ { id, nome: "GELE4N", arquivo: "GELE4N.pdf",
+ *                    alunos: [ { ra: "0000000001", nome: "FULANO ..." } ] } ],
+ *     datas:     [ "2026-02-10", "2026-02-11", ... ],   // sempre em ordem
+ *     presencas: { "0000000001": { "2026-02-10": "C", "2026-02-11": "CF" } },
+ *     conteudos: { "2026-02-10": "Apresentação da disciplina" },
+ *     notas:     { "0000000001": { p1: "7,5", a1: "8", p2: "", a2: "" } },
+ *     calendario: { de, ate, regras: { 3: { freq: "semanal" }, 4: { freq: "quinzenal", inicio } } }
+ *   }],
+ *   pdfs: { "id-da-turma": "JVBERi0x..." }  // só no backup, e só se você marcar
  * }
  * As datas ficam como texto "AAAA-MM-DD": assim dá para ordenar e comparar
  * como texto, sem problemas de fuso horário.
  */
-function estadoVazio() {
+
+// Cria um identificador único (para matérias e turmas)
+function novoId() {
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function novaMateria(nome = "Nova matéria") {
   return {
-    versao: 1,
+    id: novoId(),
+    nome,
     config: { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "" },
-    alunos: [],
+    turmas: [],
     datas: [],
     presencas: {},
     conteudos: {},
     notas: {},
+    calendario: { de: "", ate: "", regras: {} },
   };
 }
 
-let estado = carregarEstado();
-let bytesPdf = null;     // o PDF aberto (só na memória; nunca salvo nem enviado)
-let nomePdf = "diario";  // nome do arquivo, para batizar o PDF gerado
+function estadoVazio() {
+  const m = novaMateria();
+  return { versao: 2, materiaAtual: m.id, nomePasta: PASTA_PADRAO, materias: [m] };
+}
 
+// Garante que uma matéria tem todos os campos (backups antigos ou incompletos)
+function normalizarMateria(obj) {
+  const base = novaMateria();
+  const m = {
+    ...base,
+    id: obj.id || base.id,
+    nome: String(obj.nome ?? base.nome),
+    config: { ...base.config, ...(obj.config || {}) },
+    turmas: Array.isArray(obj.turmas) ? obj.turmas : [],
+    datas: Array.isArray(obj.datas) ? obj.datas.filter(ehDataValida) : [],
+    presencas: obj.presencas || {},
+    conteudos: obj.conteudos || {},
+    notas: obj.notas || {},
+    calendario: { ...base.calendario, ...(obj.calendario || {}) },
+  };
+  m.calendario.regras ||= {};
+  m.turmas = m.turmas.map((t) => ({
+    id: t.id || novoId(),
+    nome: String(t.nome || "Turma"),
+    arquivo: String(t.arquivo || ""),
+    alunos: (Array.isArray(t.alunos) ? t.alunos : [])
+      .filter((a) => a && a.ra)
+      .map((a) => ({ ra: String(a.ra).trim(), nome: String(a.nome || "") })),
+  }));
+  m.datas = [...new Set(m.datas)].sort();
+  return m;
+}
+
+/*
+ * Aceita os dois formatos:
+ *   - versão 2 (várias matérias), o atual;
+ *   - versão 1 (uma matéria só, com "alunos" direto) — convertemos para o novo.
+ */
+function normalizarEstado(obj) {
+  if (!obj || typeof obj !== "object") throw new Error("Arquivo de backup inválido.");
+  if (!Array.isArray(obj.materias)) {
+    if (!Array.isArray(obj.alunos)) throw new Error("Este arquivo não parece um backup do diário.");
+    // Formato antigo: vira uma matéria com uma turma
+    obj = {
+      versao: 2,
+      materias: [{ ...obj, nome: "Minha matéria",
+        turmas: [{ nome: "Turma 1", alunos: obj.alunos }] }],
+    };
+  }
+  const materias = obj.materias.map(normalizarMateria);
+  if (!materias.length) materias.push(novaMateria());
+  const atual = materias.some((m) => m.id === obj.materiaAtual) ? obj.materiaAtual : materias[0].id;
+  return { versao: 2, materiaAtual: atual, nomePasta: obj.nomePasta || PASTA_PADRAO, materias };
+}
+
+let estado = carregarEstado();
+
+// A matéria aberta na tela
+function materia() {
+  return estado.materias.find((m) => m.id === estado.materiaAtual) || estado.materias[0];
+}
+
+// Todos os alunos da matéria (de todas as turmas), sem repetir RA
+function alunosDaMateria(m) {
+  const vistos = new Map();
+  for (const t of m.turmas) for (const a of t.alunos) if (!vistos.has(a.ra)) vistos.set(a.ra, a);
+  return [...vistos.values()];
+}
+
+
+// ===========================================================================
+// PARTE 3 — GUARDAR NO NAVEGADOR
+// ===========================================================================
+
+/*
+ * Dois "lugares" do navegador:
+ *   - localStorage: pequeno (uns 5 MB), guarda TEXTO. Usamos para o estado (JSON).
+ *   - IndexedDB: um banco de dados do navegador, guarda arquivos grandes.
+ *     Usamos para os PDFs em branco (para não precisar abri-los toda vez)
+ *     e para lembrar a pasta onde salvar os diários.
+ * Os dois ficam SÓ neste navegador, neste computador.
+ */
 function carregarEstado() {
   try {
-    const salvo = localStorage.getItem(CHAVE_ARMAZENAMENTO);
+    const salvo = localStorage.getItem(CHAVE_ARMAZENAMENTO) || localStorage.getItem(CHAVE_ANTIGA_V1);
     if (salvo) return normalizarEstado(JSON.parse(salvo));
   } catch (erro) {
     console.warn("Não consegui ler o progresso salvo:", erro);
   }
   return estadoVazio();
-}
-
-// Garante que todos os campos existem (útil para backups antigos ou incompletos)
-function normalizarEstado(obj) {
-  const base = estadoVazio();
-  if (!obj || typeof obj !== "object") throw new Error("Arquivo de backup inválido.");
-  const e = {
-    versao: 1,
-    config: { ...base.config, ...(obj.config || {}) },
-    alunos: Array.isArray(obj.alunos) ? obj.alunos.filter((a) => a && a.ra) : [],
-    datas: Array.isArray(obj.datas) ? obj.datas.filter(ehDataValida) : [],
-    presencas: obj.presencas || {},
-    conteudos: obj.conteudos || {},
-    notas: obj.notas || {},
-  };
-  e.alunos = e.alunos.map((a) => ({ ra: String(a.ra).trim(), nome: String(a.nome || "") }));
-  e.datas = [...new Set(e.datas)].sort();
-  return e;
 }
 
 // Salva no navegador. Espera 300 ms sem mudanças para não salvar a cada tecla.
@@ -268,9 +366,79 @@ function salvar() {
   }, 300);
 }
 
+// --- IndexedDB: um pouco verboso, então escondemos tudo nestas funções ---
+let promessaBanco = null;
+function abrirBanco() {
+  promessaBanco ??= new Promise((ok, falha) => {
+    const pedido = indexedDB.open("diario-de-classe", 1);
+    // Roda só na primeira vez: cria as "gavetas" (object stores)
+    pedido.onupgradeneeded = () => {
+      pedido.result.createObjectStore("pdfs");    // id da turma -> bytes do PDF
+      pedido.result.createObjectStore("ajustes"); // "pasta" -> pasta escolhida
+    };
+    pedido.onsuccess = () => ok(pedido.result);
+    pedido.onerror = () => falha(pedido.error);
+  });
+  return promessaBanco;
+}
+
+// Executa uma operação numa gaveta e devolve o resultado
+async function banco(gaveta, modo, operacao) {
+  const db = await abrirBanco();
+  return new Promise((ok, falha) => {
+    const transacao = db.transaction(gaveta, modo);
+    const pedido = operacao(transacao.objectStore(gaveta));
+    transacao.oncomplete = () => ok(pedido?.result);
+    transacao.onerror = () => falha(transacao.error);
+  });
+}
+const bancoLer = (gaveta, chave) => banco(gaveta, "readonly", (g) => g.get(chave));
+const bancoGravar = (gaveta, chave, valor) => banco(gaveta, "readwrite", (g) => g.put(valor, chave));
+const bancoApagar = (gaveta, chave) => banco(gaveta, "readwrite", (g) => g.delete(chave));
+
+// Quais turmas têm o PDF guardado (para mostrar ✓ na tela sem esperar o banco)
+const turmasComPdf = new Set();
+
+async function guardarPdf(turmaId, bytes) {
+  try {
+    await bancoGravar("pdfs", turmaId, bytes);
+    turmasComPdf.add(turmaId);
+  } catch (erro) {
+    console.warn("Não consegui guardar o PDF no navegador:", erro);
+  }
+}
+
+async function obterPdf(turmaId) {
+  try {
+    return (await bancoLer("pdfs", turmaId)) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function apagarPdf(turmaId) {
+  turmasComPdf.delete(turmaId);
+  try { await bancoApagar("pdfs", turmaId); } catch { /* sem problema */ }
+}
+
+// Converte bytes <-> texto base64 (para colocar os PDFs dentro do backup .json)
+function paraBase64(bytes) {
+  let binario = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) { // em pedaços, para não estourar a memória
+    binario += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binario);
+}
+function deBase64(texto) {
+  const binario = atob(texto);
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  return bytes;
+}
+
 
 // ===========================================================================
-// PARTE 3 — CONVERSÕES E CÁLCULOS (equivale a ler_planilha do Python)
+// PARTE 4 — CONVERSÕES E CÁLCULOS (equivale a ler_planilha do Python)
 // ===========================================================================
 
 function ehDataValida(texto) {
@@ -289,6 +457,18 @@ function dataBR(texto) {
   return `${String(dia).padStart(2, "0")}/${String(mes).padStart(2, "0")}/${ano}`;
 }
 
+// Datas como número de dias (em UTC, o horário universal, para não sofrer
+// com horário de verão). Útil para andar de um em um dia e contar semanas.
+const UM_DIA = 86400000; // milissegundos em um dia
+function paraUTC(texto) {
+  const { ano, mes, dia } = partesData(texto);
+  return Date.UTC(ano, mes - 1, dia);
+}
+function deUTC(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+const DIA_SEMANA_NOME = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
 /* Aceita 7, 7.5, "7,5" ... e devolve número (ou null se vazio).
    Se não for número, devolve NaN (o Python daria erro; aqui avisamos na tela). */
 function paraNumero(valor) {
@@ -301,9 +481,9 @@ function paraNumero(valor) {
 
 // Pesos, como no Python:  peso_prova = ... or 1   e   peso_ativ = ... or 0
 // (o "or" do Python troca vazio OU zero pelo valor padrão)
-function pesos() {
-  const pp = paraNumero(estado.config.pesoProva);
-  const pa = paraNumero(estado.config.pesoAtiv);
+function pesos(m) {
+  const pp = paraNumero(m.config.pesoProva);
+  const pa = paraNumero(m.config.pesoAtiv);
   return {
     pesoProva: pp && !Number.isNaN(pp) ? pp : 1,
     pesoAtiv: pa && !Number.isNaN(pa) ? pa : 0,
@@ -314,8 +494,8 @@ function pesos() {
 //  - prova e atividades preenchidas -> média ponderada
 //  - só a prova, e peso das atividades = 0 -> a própria prova
 //  - senão -> sem média (null)
-function calcularMedia(prova, ativ) {
-  const { pesoProva, pesoAtiv } = pesos();
+function calcularMedia(m, prova, ativ) {
+  const { pesoProva, pesoAtiv } = pesos(m);
   const p = paraNumero(prova);
   const a = paraNumero(ativ);
   if (Number.isNaN(p) || Number.isNaN(a)) return null;
@@ -347,22 +527,49 @@ function letrasDoDia(valor) {
 }
 
 // Separa as datas por bimestre (aulas antes do início do 2º vão para o 1º)
-function datasPorBimestre() {
-  const inicio = estado.config.inicio2bim;
+function datasPorBimestre(m) {
+  const inicio = m.config.inicio2bim;
   return {
-    1: estado.datas.filter((d) => !inicio || d < inicio),
-    2: inicio ? estado.datas.filter((d) => d >= inicio) : [],
+    1: m.datas.filter((d) => !inicio || d < inicio),
+    2: inicio ? m.datas.filter((d) => d >= inicio) : [],
   };
 }
 
-function bimestreDaData(d) {
-  const inicio = estado.config.inicio2bim;
+function bimestreDaData(m, d) {
+  const inicio = m.config.inicio2bim;
   return inicio && d >= inicio ? 2 : 1;
+}
+
+/*
+ * Gera as datas de aula entre "de" e "ate" seguindo as regras de cada dia da semana:
+ *   regras = { 3: { freq: "semanal" }, 4: { freq: "quinzenal", inicio: "2026-02-12" } }
+ * Quinzenal: a partir da data "inicio", pula de 14 em 14 dias.
+ */
+function gerarDatasCalendario(de, ate, regras) {
+  const datas = [];
+  for (let t = paraUTC(de); t <= paraUTC(ate); t += UM_DIA) {
+    const regra = regras[new Date(t).getUTCDay()];
+    if (!regra || regra.freq === "nenhuma") continue;
+    if (regra.freq === "semanal") {
+      datas.push(deUTC(t));
+    } else if (regra.freq === "quinzenal") {
+      const diasDesdeInicio = Math.round((t - paraUTC(regra.inicio)) / UM_DIA);
+      if (diasDesdeInicio >= 0 && diasDesdeInicio % 14 === 0) datas.push(deUTC(t));
+    }
+  }
+  return datas;
+}
+
+// Primeira data, a partir de "de", que cai no dia da semana pedido
+function primeiraOcorrencia(de, diaSemana) {
+  let t = paraUTC(de);
+  while (new Date(t).getUTCDay() !== diaSemana) t += UM_DIA;
+  return deUTC(t);
 }
 
 
 // ===========================================================================
-// PARTE 4 — DESENHAR OS TEXTOS NO PDF (pdf-lib)
+// PARTE 5 — DESENHAR OS TEXTOS NO PDF (pdf-lib)
 // ===========================================================================
 
 /*
@@ -522,33 +729,30 @@ function desenharConteudo(ctx, info, dados, numeroInicial, avisos) {
   return numero;
 }
 
-// Junta os dados do estado no formato que as funções de desenho esperam
+// Junta os dados da matéria no formato que as funções de desenho esperam
 // (é o que o ler_planilha() do Python devolve). Também valida tudo.
-function prepararDados(erros) {
-  if (!estado.config.inicio2bim) erros.push("Preencha o 'Início do 2º bimestre' nas Configurações.");
+function prepararDados(m, erros) {
+  if (!m.config.inicio2bim) erros.push("Preencha o 'Início do 2º bimestre' nas Configurações.");
   for (const campo of ["pesoProva", "pesoAtiv"]) {
-    if (Number.isNaN(paraNumero(estado.config[campo]))) erros.push("Peso inválido nas Configurações.");
+    if (Number.isNaN(paraNumero(m.config[campo]))) erros.push("Peso inválido nas Configurações.");
   }
 
   const presencas = new Map();
   const medias = new Map();
-  for (const { ra, nome } of estado.alunos) {
-    presencas.set(ra, estado.presencas[ra] || {});
-    const n = estado.notas[ra] || {};
+  for (const { ra, nome } of alunosDaMateria(m)) {
+    presencas.set(ra, m.presencas[ra] || {});
+    const n = m.notas[ra] || {};
     for (const campo of ["p1", "a1", "p2", "a2"]) {
       if (Number.isNaN(paraNumero(n[campo]))) erros.push(`Nota inválida para ${nome || ra}: "${n[campo]}".`);
     }
-    medias.set(ra, { 1: calcularMedia(n.p1, n.a1), 2: calcularMedia(n.p2, n.a2) });
+    medias.set(ra, { 1: calcularMedia(m, n.p1, n.a1), 2: calcularMedia(m, n.p2, n.a2) });
   }
-  return { datas: datasPorBimestre(), presencas, medias, conteudos: estado.conteudos };
+  return { datas: datasPorBimestre(m), presencas, medias, conteudos: m.conteudos };
 }
 
-// Igual a preencher() do Python: lê o PDF, desenha e devolve os bytes do novo PDF.
-async function gerarPdfPreenchido(avisos) {
-  const erros = [];
-  const dados = prepararDados(erros);
-  if (erros.length) throw new Error([...new Set(erros)].join("\n"));
-
+// Igual a preencher() do Python: recebe o PDF em branco de UMA turma e os dados
+// já preparados da matéria; devolve os bytes do PDF preenchido.
+async function gerarPdfPreenchido(bytesPdf, dados, avisos) {
   const paginasInfo = await lerPdfEmBranco(bytesPdf);
   const pdf = await PDFLib.PDFDocument.load(bytesPdf.slice(), { ignoreEncryption: true });
   // As fontes padrão do PDF: as mesmas do reportlab (mesmas larguras de letra)
@@ -556,8 +760,7 @@ async function gerarPdfPreenchido(avisos) {
   const helvBold = await pdf.embedFont(PDFLib.StandardFonts.HelveticaBold);
 
   let numeroAula = 1;
-  const paginasPdf = pdf.getPages();
-  paginasPdf.forEach((pagina, idx) => {
+  pdf.getPages().forEach((pagina, idx) => {
     const info = paginasInfo[idx];
     if (!info) return;
 
@@ -579,7 +782,175 @@ async function gerarPdfPreenchido(avisos) {
 
 
 // ===========================================================================
-// PARTE 5 — A TELA
+// PARTE 6 — GERAR VÁRIOS DIÁRIOS E SALVAR NUMA PASTA
+// ===========================================================================
+
+// Nomes de arquivo não podem ter  \ / : * ? " < > |  (o Windows proíbe)
+function nomeDeArquivo(texto) {
+  return String(texto).replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim() || "sem nome";
+}
+
+/*
+ * Gera o diário de cada turma das matérias pedidas.
+ * Devolve { arquivos: [{ nome, bytes }], mensagens: [{ texto, erro }] }.
+ * Um problema numa turma NÃO impede as outras de serem geradas.
+ */
+async function gerarDiarios(materias) {
+  const arquivos = [];
+  const mensagens = [];
+  const nomesUsados = new Set();
+
+  for (const m of materias) {
+    const titulo = m.nome || "Matéria sem nome";
+    if (!m.turmas.length) {
+      mensagens.push({ texto: `${titulo}: nenhuma turma (PDF) adicionada.`, erro: true });
+      continue;
+    }
+    const erros = [];
+    const dados = prepararDados(m, erros);
+    if (erros.length) {
+      for (const e of new Set(erros)) mensagens.push({ texto: `${titulo}: ${e}`, erro: true });
+      continue;
+    }
+    for (const t of m.turmas) {
+      const rotulo = `${titulo} – ${t.nome}`;
+      const bytes = await obterPdf(t.id);
+      if (!bytes) {
+        mensagens.push({ texto: `${rotulo}: o PDF em branco não está guardado. Use “Trocar PDF” nessa turma.`, erro: true });
+        continue;
+      }
+      try {
+        const avisos = new Set();
+        const saida = await gerarPdfPreenchido(bytes, dados, avisos);
+        // Nome do arquivo: "Matéria - Turma.pdf" (sem repetir)
+        let nome = nomeDeArquivo(`${titulo} - ${t.nome}`);
+        for (let k = 2; nomesUsados.has(nome.toLowerCase()); k++) nome = nomeDeArquivo(`${titulo} - ${t.nome} (${k})`);
+        nomesUsados.add(nome.toLowerCase());
+        arquivos.push({ nome: `${nome}.pdf`, bytes: saida });
+        mensagens.push({ texto: `✓ ${nome}.pdf` });
+        for (const a of avisos) mensagens.push({ texto: `${rotulo}: ${a}` });
+      } catch (erro) {
+        mensagens.push({ texto: `${rotulo}: erro ao gerar (${erro.message}).`, erro: true });
+      }
+    }
+  }
+  return { arquivos, mensagens };
+}
+
+/*
+ * Escolher uma pasta do computador e gravar nela só funciona no Chrome e no Edge
+ * (é a "File System Access API"). Nos outros navegadores, baixamos os arquivos.
+ */
+const podeEscolherPasta = typeof window.showDirectoryPicker === "function";
+
+// Devolve a pasta "base" escolhida (lembrada da última vez, se ainda tivermos permissão)
+async function obterPastaBase(escolherOutra = false) {
+  let pasta = null;
+  if (!escolherOutra) {
+    try { pasta = await bancoLer("ajustes", "pasta"); } catch { pasta = null; }
+  }
+  if (pasta && typeof pasta.queryPermission === "function") {
+    // O navegador pede de novo a permissão de escrita a cada visita
+    let permissao = await pasta.queryPermission({ mode: "readwrite" });
+    if (permissao !== "granted") permissao = await pasta.requestPermission({ mode: "readwrite" });
+    if (permissao !== "granted") pasta = null;
+  }
+  if (!pasta) {
+    pasta = await window.showDirectoryPicker({ id: "diarios", mode: "readwrite" });
+    try { await bancoGravar("ajustes", "pasta", pasta); } catch { /* só não vai lembrar */ }
+  }
+  mostrarInfoPasta(pasta);
+  return pasta;
+}
+
+// "Elétricos" -> "Eletricos": tira os acentos (separa a letra do acento e apaga o acento)
+function semAcentos(texto) {
+  return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[ºª°]/g, "o");
+}
+
+// Alguns sistemas de arquivos recusam acentos no nome. Tentamos com acento e,
+// se der erro, tentamos de novo sem acento.
+async function abrirOuCriar(pasta, nome, tipo) {
+  const abrir = (n) => tipo === "pasta"
+    ? pasta.getDirectoryHandle(n, { create: true })
+    : pasta.getFileHandle(n, { create: true });
+  try {
+    return await abrir(nome);
+  } catch (erro) {
+    if (semAcentos(nome) === nome) throw erro;
+    return abrir(semAcentos(nome));
+  }
+}
+
+// Cria (ou reaproveita) a subpasta e grava todos os arquivos nela
+async function gravarNaPasta(pastaBase, nomeSubpasta, arquivos) {
+  const sub = await abrirOuCriar(pastaBase, nomeDeArquivo(nomeSubpasta), "pasta");
+  for (const { nome, bytes } of arquivos) {
+    const arquivo = await abrirOuCriar(sub, nome, "arquivo");
+    const escritor = await arquivo.createWritable(); // abre para escrever (substitui o antigo)
+    await escritor.write(bytes);
+    await escritor.close();
+  }
+  return sub.name;
+}
+
+// Faz o navegador "baixar" um arquivo criado aqui mesmo na página
+function baixarArquivo(conteudo, nome, tipo) {
+  const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }));
+  const a = el("a", { href: url, download: nome });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  // Libera a memória depois de 1 minuto (se for antes, o download pode perder o nome)
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+const esperar = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+// O que acontece ao clicar em "Gerar diários..."
+async function gerarESalvar(materias) {
+  const botoes = [$("btnGerarMateria"), $("btnGerarTodas")];
+  botoes.forEach((b) => (b.disabled = true));
+  try {
+    // 1) Primeiro a pasta: o navegador só deixa abrir a janela de escolha
+    //    logo depois de um clique, então não dá para deixar para o final.
+    let pasta = null;
+    if (podeEscolherPasta) {
+      try {
+        pasta = await obterPastaBase();
+      } catch (erro) {
+        if (erro.name === "AbortError") return mostrarAvisos([{ texto: "Nenhuma pasta escolhida.", erro: true }]);
+        throw erro;
+      }
+    }
+
+    // 2) Gera os PDFs
+    mostrarAvisos([{ texto: "Gerando…" }]);
+    const { arquivos, mensagens } = await gerarDiarios(materias);
+    if (!arquivos.length) return mostrarAvisos(mensagens);
+
+    // 3) Grava na pasta (ou baixa um por um)
+    if (pasta) {
+      const nomeSub = await gravarNaPasta(pasta, estado.nomePasta || PASTA_PADRAO, arquivos);
+      mensagens.unshift({ texto: `${arquivos.length} diário(s) salvo(s) em “${pasta.name}/${nomeSub}”.` });
+    } else {
+      for (const { nome, bytes } of arquivos) {
+        baixarArquivo(bytes, nome, "application/pdf");
+        await esperar(400); // uma pausa: alguns navegadores bloqueiam muitos downloads seguidos
+      }
+      mensagens.unshift({ texto: `${arquivos.length} diário(s) baixado(s). (Para salvar direto numa pasta, use o Chrome ou o Edge.)` });
+    }
+    mostrarAvisos(mensagens);
+  } catch (erro) {
+    mostrarAvisos([{ texto: "Erro: " + erro.message, erro: true }]);
+  } finally {
+    botoes.forEach((b) => (b.disabled = false));
+  }
+}
+
+
+// ===========================================================================
+// PARTE 7 — A TELA
 // ===========================================================================
 
 // Atalho para document.getElementById
@@ -594,17 +965,125 @@ function el(tag, props = {}, ...filhos) {
 
 // Desenha a tela inteira a partir do estado
 function render() {
+  renderLateral();
+  renderMateria();
   renderConfig();
+  renderCalendario();
   renderAulas();
   renderChamada();
   renderNotas();
+  $("nomePasta").value = estado.nomePasta || PASTA_PADRAO;
+}
+
+// --- Barra lateral: uma "aba" por matéria ---
+function renderLateral() {
+  const lista = $("listaMaterias");
+  lista.replaceChildren();
+  for (const m of estado.materias) {
+    const botao = el("button", { type: "button", className: "aba-materia" + (m.id === estado.materiaAtual ? " ativa" : "") },
+      m.nome || "Matéria sem nome",
+      el("small", { textContent: `${m.turmas.map((t) => t.nome).join(", ") || "sem turmas"} · ${m.datas.length} datas` }));
+    botao.addEventListener("click", () => {
+      estado.materiaAtual = m.id;
+      salvar();
+      render();
+      window.scrollTo({ top: 0 });
+    });
+    lista.append(botao);
+  }
+}
+
+// --- Nome da matéria e lista de turmas ---
+function renderMateria() {
+  const m = materia();
+  $("nomeMateria").value = m.nome;
+  const lista = $("listaTurmas");
+  lista.replaceChildren();
+  if (!m.turmas.length) {
+    lista.append(el("p", { className: "dica", textContent: "Nenhuma turma ainda. Adicione o PDF em branco do diário." }));
+  }
+  for (const t of m.turmas) {
+    const nome = el("input", { type: "text", value: t.nome });
+    nome.setAttribute("aria-label", "Nome da turma");
+    nome.addEventListener("input", () => { t.nome = nome.value; salvar(); renderLateral(); });
+    nome.addEventListener("change", () => { renderChamada(); renderNotas(); });
+
+    const temPdf = turmasComPdf.has(t.id);
+    const status = el("span", {
+      className: temPdf ? "ok" : "falta",
+      textContent: temPdf ? "✓ PDF guardado" : "✗ falta o PDF",
+      title: t.arquivo,
+    });
+
+    // "Trocar PDF": abre outro arquivo para ESTA turma
+    const trocar = el("label", { className: "botao" }, "Trocar PDF…");
+    const entrada = el("input", { type: "file", accept: "application/pdf,.pdf", hidden: true });
+    entrada.addEventListener("change", async () => {
+      if (entrada.files[0]) await abrirPdfTurma(entrada.files[0], t);
+      entrada.value = "";
+    });
+    trocar.append(entrada);
+
+    const remover = el("button", { type: "button", className: "botao perigo", textContent: "Remover turma" });
+    remover.addEventListener("click", () => removerTurma(t));
+
+    lista.append(el("div", { className: "turma" },
+      nome, el("span", { textContent: `${t.alunos.length} alunos` }), status, trocar, remover));
+  }
+}
+
+/*
+ * Abre um PDF em branco. Se "turma" for informada, atualiza essa turma;
+ * senão, procura uma turma com o mesmo nome de arquivo ou cria uma nova.
+ */
+async function abrirPdfTurma(arquivo, turma = null) {
+  const m = materia();
+  const bytes = new Uint8Array(await arquivo.arrayBuffer()); // lê o arquivo para a memória
+  const paginas = await lerPdfEmBranco(bytes);
+  const doPdf = alunosDoPdf(paginas);
+  if (!doPdf.size) throw new Error(`${arquivo.name}: não encontrei alunos. É mesmo um diário em branco?`);
+
+  turma ??= m.turmas.find((t) => t.arquivo === arquivo.name);
+  if (!turma) {
+    turma = { id: novoId(), nome: arquivo.name.replace(/\.pdf$/i, ""), arquivo: arquivo.name, alunos: [] };
+    m.turmas.push(turma);
+  }
+  turma.arquivo = arquivo.name;
+
+  // Mantém os alunos que já estavam e acrescenta os novos, na ordem do PDF
+  const jaTinha = new Set(turma.alunos.map((a) => a.ra));
+  for (const [ra, nome] of doPdf) if (!jaTinha.has(ra)) turma.alunos.push({ ra, nome });
+  const foraDoPdf = turma.alunos.filter((a) => !doPdf.has(a.ra));
+
+  await guardarPdf(turma.id, bytes);
+  salvar();
+  render();
+  if (foraDoPdf.length) {
+    alert(`Atenção (${turma.nome}): estes alunos estavam salvos, mas não aparecem neste PDF:\n` +
+      foraDoPdf.map((a) => `${a.ra} ${a.nome}`).join("\n"));
+  }
+}
+
+async function removerTurma(t) {
+  const m = materia();
+  if (!confirm(`Remover a turma ${t.nome} desta matéria? A chamada e as notas desses alunos serão apagadas.`)) return;
+  m.turmas = m.turmas.filter((x) => x !== t);
+  // Apaga os dados dos alunos que não estão em nenhuma outra turma da matéria
+  const restantes = new Set(alunosDaMateria(m).map((a) => a.ra));
+  for (const a of t.alunos) {
+    if (!restantes.has(a.ra)) { delete m.presencas[a.ra]; delete m.notas[a.ra]; }
+  }
+  await apagarPdf(t.id);
+  salvar();
+  render();
 }
 
 // --- Configurações ---
 function renderConfig() {
-  $("cfgPesoProva").value = estado.config.pesoProva;
-  $("cfgPesoAtiv").value = estado.config.pesoAtiv;
-  $("cfgInicio2").value = estado.config.inicio2bim;
+  const m = materia();
+  $("cfgPesoProva").value = m.config.pesoProva;
+  $("cfgPesoAtiv").value = m.config.pesoAtiv;
+  $("cfgInicio2").value = m.config.inicio2bim;
   marcarInvalido($("cfgPesoProva"));
   marcarInvalido($("cfgPesoAtiv"));
 }
@@ -614,199 +1093,266 @@ function marcarInvalido(input) {
   input.classList.toggle("invalido", Number.isNaN(paraNumero(input.value)));
 }
 
+// --- Gerador de datas: uma linha por dia da semana ---
+function renderCalendario() {
+  const cal = materia().calendario;
+  $("gerador").open = !materia().datas.length; // aberto só enquanto não há datas
+  $("gerDe").value = cal.de || "";
+  $("gerAte").value = cal.ate || "";
+  const corpo = $("gerDias");
+  corpo.replaceChildren();
+
+  for (const [num, nome] of DIAS_SEMANA) {
+    const regra = cal.regras[num] || { freq: "nenhuma" };
+    const escolha = el("select", {},
+      el("option", { value: "nenhuma", textContent: "sem aula" }),
+      el("option", { value: "semanal", textContent: "toda semana" }),
+      el("option", { value: "quinzenal", textContent: "quinzenal" }));
+    escolha.value = regra.freq;
+    escolha.setAttribute("aria-label", `Frequência de ${nome}`);
+
+    const inicio = el("input", { type: "date", value: regra.inicio || "" });
+    inicio.setAttribute("aria-label", `Primeira aula quinzenal de ${nome}`);
+    const rotuloInicio = el("label", { hidden: regra.freq !== "quinzenal" }, "1ª aula em ", inicio);
+
+    // Guarda a escolha na matéria (assim ela é lembrada e vai para o backup)
+    const atualizar = () => {
+      if (escolha.value === "quinzenal" && !inicio.value && cal.de) {
+        inicio.value = primeiraOcorrencia(cal.de, num); // sugestão: o primeiro dia desses
+      }
+      rotuloInicio.hidden = escolha.value !== "quinzenal";
+      if (escolha.value === "nenhuma") delete cal.regras[num];
+      else cal.regras[num] = { freq: escolha.value, inicio: inicio.value };
+      salvar();
+    };
+    escolha.addEventListener("change", atualizar);
+    inicio.addEventListener("change", atualizar);
+
+    corpo.append(el("tr", {}, el("td", { textContent: nome }), el("td", {}, escolha), el("td", {}, rotuloInicio)));
+  }
+}
+
 // --- Lista de aulas (data + conteúdo) ---
 function renderAulas() {
+  const m = materia();
   const lista = $("listaAulas");
   lista.replaceChildren();
-  estado.datas.forEach((d, i) => {
-    const bim = bimestreDaData(d);
+  m.datas.forEach((d, i) => {
+    const bim = bimestreDaData(m, d);
     const campo = el("input", {
-      type: "text", value: estado.conteudos[d] || "", placeholder: "Conteúdo da aula",
+      type: "text", value: m.conteudos[d] || "", placeholder: "Conteúdo da aula",
     });
     campo.setAttribute("aria-label", `Conteúdo da aula de ${dataBR(d)}`);
     campo.addEventListener("input", () => {
-      estado.conteudos[d] = campo.value;
+      m.conteudos[d] = campo.value;
       salvar();
     });
     const remover = el("button", { type: "button", className: "remover", title: "Remover esta data", textContent: "×" });
     remover.addEventListener("click", () => removerData(d));
     lista.append(el("div", { className: "aula" },
       el("span", { className: "num", textContent: i + 1 }),
-      el("span", { textContent: dataBR(d) }),
+      el("span", { textContent: `${dataBR(d)}`, title: DIA_SEMANA_NOME[new Date(paraUTC(d)).getUTCDay()] }),
       el("span", { className: `etiqueta bim${bim}`, textContent: `${bim}º bim` }),
       campo, remover));
   });
 
   // Resumo: quantas colunas cada bimestre ocupa (o diário tem 42 = 21 dias)
-  const pb = datasPorBimestre();
+  const pb = datasPorBimestre(m);
   const resumo = [1, 2].map((b) => {
     const cols = pb[b].length * AULAS_POR_DIA;
     const alerta = cols > MAX_COLUNAS ? " ⚠ passa do limite!" : "";
     return `${b}º bimestre: ${pb[b].length} dias (${cols} de ${MAX_COLUNAS} colunas)${alerta}`;
   });
-  $("resumoBimestres").textContent = estado.datas.length
-    ? resumo.join(" · ") + (estado.config.inicio2bim ? "" : " — defina o início do 2º bimestre.")
+  $("resumoBimestres").textContent = m.datas.length
+    ? resumo.join(" · ") + (m.config.inicio2bim ? "" : " — defina o início do 2º bimestre.")
     : "Nenhuma data ainda.";
 }
 
 function adicionarDatas(novas) {
-  estado.datas = [...new Set([...estado.datas, ...novas.filter(ehDataValida)])].sort();
+  const m = materia();
+  const antes = m.datas.length;
+  m.datas = [...new Set([...m.datas, ...novas.filter(ehDataValida)])].sort();
   salvar();
   render();
+  return m.datas.length - antes; // quantas eram realmente novas
 }
 
 function removerData(d) {
-  const temAlgo = estado.conteudos[d] ||
-    Object.values(estado.presencas).some((p) => p[d]);
+  const m = materia();
+  const temAlgo = m.conteudos[d] || Object.values(m.presencas).some((p) => p[d]);
   if (temAlgo && !confirm(`Remover ${dataBR(d)} e apagar a chamada e o conteúdo desse dia?`)) return;
-  estado.datas = estado.datas.filter((x) => x !== d);
-  delete estado.conteudos[d];
-  for (const p of Object.values(estado.presencas)) delete p[d];
+  m.datas = m.datas.filter((x) => x !== d);
+  delete m.conteudos[d];
+  for (const p of Object.values(m.presencas)) delete p[d];
   salvar();
   render();
 }
 
-// --- Chamada ---
+// --- Chamada (alunos agrupados por turma) ---
 function renderChamada() {
+  const m = materia();
   const tabela = $("tabelaChamada");
   tabela.replaceChildren();
-  if (!estado.alunos.length) {
-    tabela.append(el("tr", {}, el("td", { textContent: "Abra o PDF em branco para carregar os alunos." })));
+  if (!m.turmas.some((t) => t.alunos.length)) {
+    tabela.append(el("tr", {}, el("td", { textContent: "Adicione uma turma (PDF em branco) para carregar os alunos." })));
     return;
   }
 
   // Cabeçalho: RA | Nome | uma coluna por data | Faltas 1º | Faltas 2º
   const cab = el("tr", {}, el("th", { className: "fixo1", textContent: "RA" }),
     el("th", { className: "fixo2", textContent: "Nome" }));
-  for (const d of estado.datas) {
+  for (const d of m.datas) {
     const { dia, mes } = partesData(d);
     const botaoTodos = el("button", { type: "button", className: "botao mini", textContent: "C",
       title: "Marcar C em todos os vazios deste dia" });
     botaoTodos.addEventListener("click", () => marcarTodosPresentes(d));
-    cab.append(el("th", { className: `bim${bimestreDaData(d)}` },
+    cab.append(el("th", { className: `bim${bimestreDaData(m, d)}` },
+      DIA_SEMANA_NOME[new Date(paraUTC(d)).getUTCDay()], el("br"),
       `${String(dia).padStart(2, "0")}/${String(mes).padStart(2, "0")}`, el("br"), botaoTodos));
   }
   cab.append(el("th", { textContent: "Faltas 1º" }), el("th", { textContent: "Faltas 2º" }));
   tabela.append(el("thead", {}, cab));
 
   const corpo = el("tbody");
-  for (const { ra, nome } of estado.alunos) {
-    const linha = el("tr", {}, el("td", { className: "ra fixo1", textContent: ra }),
-      el("td", { className: "nome fixo2", textContent: nome, title: nome }));
-    for (const d of estado.datas) {
-      const valor = estado.presencas[ra]?.[d] || "";
-      const botao = el("button", { type: "button", className: `celula v-${valor}`, textContent: valor });
-      botao.setAttribute("aria-label", `${nome}, ${dataBR(d)}: ${valor || "vazio"}`);
-      botao.addEventListener("click", () => alternarPresenca(ra, d, botao));
-      linha.append(el("td", {}, botao));
+  for (const t of m.turmas) {
+    // Linha-título da turma
+    corpo.append(el("tr", { className: "grupo-turma" },
+      el("th", { colSpan: 2, textContent: `${t.nome} (${t.alunos.length} alunos)` }),
+      el("td", { colSpan: m.datas.length + 2 })));
+    for (const { ra, nome } of t.alunos) {
+      const linha = el("tr", {}, el("td", { className: "ra fixo1", textContent: ra }),
+        el("td", { className: "nome fixo2", textContent: nome, title: nome }));
+      for (const d of m.datas) {
+        const valor = m.presencas[ra]?.[d] || "";
+        const botao = el("button", { type: "button", className: `celula v-${valor}`, textContent: valor });
+        botao.setAttribute("aria-label", `${nome}, ${dataBR(d)}: ${valor || "vazio"}`);
+        botao.addEventListener("click", () => alternarPresenca(ra, d, botao));
+        linha.append(el("td", {}, botao));
+      }
+      const f = contarFaltas(m, ra);
+      linha.append(el("td", { textContent: f[1] }), el("td", { textContent: f[2] }));
+      corpo.append(linha);
     }
-    const f = contarFaltas(ra);
-    linha.append(el("td", { textContent: f[1] }), el("td", { textContent: f[2] }));
-    corpo.append(linha);
   }
   tabela.append(corpo);
 
   // A coluna "Nome" fica grudada logo depois da coluna "RA": medimos a largura do RA
-  const thRa = tabela.querySelector("th.fixo1");
-  tabela.style.setProperty("--larg-ra", `${thRa.offsetWidth}px`);
+  tabela.style.setProperty("--larg-ra", `${tabela.querySelector("th.fixo1").offsetWidth}px`);
 }
 
 // Clique na célula: avança no ciclo vazio → C → F → CF → FC → vazio
 function alternarPresenca(ra, d, botao) {
-  const atual = estado.presencas[ra]?.[d] || "";
+  const m = materia();
+  const atual = m.presencas[ra]?.[d] || "";
   const proximo = CICLO_CHAMADA[(CICLO_CHAMADA.indexOf(atual) + 1) % CICLO_CHAMADA.length];
-  estado.presencas[ra] ??= {}; // cria o objeto do aluno se ainda não existir
-  if (proximo) estado.presencas[ra][d] = proximo;
-  else delete estado.presencas[ra][d];
+  m.presencas[ra] ??= {}; // cria o objeto do aluno se ainda não existir
+  if (proximo) m.presencas[ra][d] = proximo;
+  else delete m.presencas[ra][d];
   salvar();
-  // Atualiza só a célula e as faltas (mais rápido do que redesenhar a tabela)
+  // Se o mesmo aluno aparece em duas turmas, redesenha tudo; senão, só a célula
+  const repetido = m.turmas.filter((t) => t.alunos.some((a) => a.ra === ra)).length > 1;
+  if (repetido) return renderChamada();
   botao.className = `celula v-${proximo}`;
   botao.textContent = proximo;
   const linha = botao.closest("tr");
-  const f = contarFaltas(ra);
+  const f = contarFaltas(m, ra);
   linha.cells[linha.cells.length - 2].textContent = f[1];
   linha.cells[linha.cells.length - 1].textContent = f[2];
 }
 
 function marcarTodosPresentes(d) {
-  for (const { ra } of estado.alunos) {
-    estado.presencas[ra] ??= {};
-    if (!estado.presencas[ra][d]) estado.presencas[ra][d] = "C";
+  const m = materia();
+  for (const { ra } of alunosDaMateria(m)) {
+    m.presencas[ra] ??= {};
+    if (!m.presencas[ra][d]) m.presencas[ra][d] = "C";
   }
   salvar();
   renderChamada();
 }
 
 // Conta as faltas (cada "F" = 1 aula perdida), por bimestre
-function contarFaltas(ra) {
+function contarFaltas(m, ra) {
   const total = { 1: 0, 2: 0 };
-  for (const d of estado.datas) {
-    const letras = letrasDoDia(estado.presencas[ra]?.[d]);
-    if (letras) total[bimestreDaData(d)] += letras.filter((l) => l === "F").length;
+  for (const d of m.datas) {
+    const letras = letrasDoDia(m.presencas[ra]?.[d]);
+    if (letras) total[bimestreDaData(m, d)] += letras.filter((l) => l === "F").length;
   }
   return total;
 }
 
-// --- Notas ---
+// --- Notas (também agrupadas por turma) ---
 function renderNotas() {
+  const m = materia();
   const tabela = $("tabelaNotas");
   tabela.replaceChildren();
-  if (!estado.alunos.length) return;
+  if (!m.turmas.some((t) => t.alunos.length)) return;
 
   tabela.append(el("thead", {}, el("tr", {},
     ...["RA", "Nome", "Prova 1º", "Ativ. 1º", "Média 1º", "Prova 2º", "Ativ. 2º", "Média 2º"]
       .map((t, i) => el("th", { className: i === 0 ? "fixo1" : i === 1 ? "fixo2" : "", textContent: t })))));
 
   const corpo = el("tbody");
-  for (const { ra, nome } of estado.alunos) {
-    estado.notas[ra] ??= { p1: "", a1: "", p2: "", a2: "" };
-    const n = estado.notas[ra];
-    const celMedia = { 1: el("td"), 2: el("td") };
+  for (const t of m.turmas) {
+    corpo.append(el("tr", { className: "grupo-turma" },
+      el("th", { colSpan: 2, textContent: t.nome }), el("td", { colSpan: 6 })));
+    for (const { ra, nome } of t.alunos) {
+      m.notas[ra] ??= { p1: "", a1: "", p2: "", a2: "" };
+      const n = m.notas[ra];
+      const celMedia = { 1: el("td"), 2: el("td") };
 
-    const atualizarMedias = () => {
-      for (const b of [1, 2]) {
-        const m = calcularMedia(n[`p${b}`], n[`a${b}`]);
-        celMedia[b].textContent = m === null ? "" : formatarNota(m);
-      }
-    };
+      const atualizarMedias = () => {
+        for (const b of [1, 2]) {
+          const media = calcularMedia(m, n[`p${b}`], n[`a${b}`]);
+          celMedia[b].textContent = media === null ? "" : formatarNota(media);
+        }
+      };
 
-    const campo = (chave) => {
-      const input = el("input", { type: "text", inputMode: "decimal", value: n[chave] || "" });
-      input.setAttribute("aria-label", `${chave} de ${nome}`);
-      marcarInvalido(input);
-      input.addEventListener("input", () => {
-        n[chave] = input.value;
+      const campo = (chave) => {
+        const input = el("input", { type: "text", inputMode: "decimal", value: n[chave] || "" });
+        input.setAttribute("aria-label", `${chave} de ${nome}`);
         marcarInvalido(input);
-        atualizarMedias();
-        salvar();
-      });
-      return el("td", {}, input);
-    };
+        input.addEventListener("input", () => {
+          n[chave] = input.value;
+          marcarInvalido(input);
+          atualizarMedias();
+          salvar();
+        });
+        return el("td", {}, input);
+      };
 
-    corpo.append(el("tr", {},
-      el("td", { className: "ra fixo1", textContent: ra }),
-      el("td", { className: "nome fixo2", textContent: nome, title: nome }),
-      campo("p1"), campo("a1"), celMedia[1],
-      campo("p2"), campo("a2"), celMedia[2]));
-    atualizarMedias();
+      corpo.append(el("tr", {},
+        el("td", { className: "ra fixo1", textContent: ra }),
+        el("td", { className: "nome fixo2", textContent: nome, title: nome }),
+        campo("p1"), campo("a1"), celMedia[1],
+        campo("p2"), campo("a2"), celMedia[2]));
+      atualizarMedias();
+    }
   }
   tabela.append(corpo);
   tabela.style.setProperty("--larg-ra", `${tabela.querySelector("th.fixo1").offsetWidth}px`);
 }
 
-// --- Avisos na seção "Gerar" ---
-function mostrarAvisos(lista, ehErro = false) {
-  $("avisos").replaceChildren(...lista.map((t) => el("li", { className: ehErro ? "erro" : "", textContent: t })));
+// --- Mensagens na seção "Gerar" ---
+// lista = [{ texto, erro }]  (ou só textos)
+function mostrarAvisos(lista) {
+  $("avisos").replaceChildren(...lista.map((item) => {
+    const { texto, erro } = typeof item === "string" ? { texto: item } : item;
+    return el("li", { className: erro ? "erro" : "", textContent: texto });
+  }));
 }
 
-// Faz o navegador "baixar" um arquivo criado aqui mesmo na página
-function baixarArquivo(conteudo, nome, tipo) {
-  const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }));
-  const a = el("a", { href: url, download: nome });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+// Mostra qual pasta está escolhida (ou explica a alternativa)
+function mostrarInfoPasta(pasta) {
+  if (!podeEscolherPasta) {
+    $("infoPasta").textContent = "Este navegador não deixa salvar direto numa pasta: os PDFs serão baixados um por um. " +
+      "(No Chrome ou no Edge, você escolhe uma pasta e o app cria a subpasta acima dentro dela.)";
+    $("btnTrocarPasta").hidden = true;
+  } else if (pasta) {
+    $("infoPasta").textContent = `Pasta escolhida: “${pasta.name}”. A subpasta acima será criada dentro dela.`;
+  } else {
+    $("infoPasta").textContent = "Na primeira vez, o navegador vai pedir para você escolher uma pasta do computador. " +
+      "A subpasta acima será criada dentro dela.";
+  }
 }
 
 function hojeISO() {
@@ -819,137 +1365,167 @@ function hojeISO() {
 // EVENTOS — o que acontece quando você clica/digita
 // ===========================================================================
 
-// Abrir o PDF em branco
+// Nova matéria
+$("btnNovaMateria").addEventListener("click", () => {
+  const nome = prompt("Nome da matéria:", "");
+  if (nome === null) return; // cancelou
+  const m = novaMateria(nome.trim() || "Nova matéria");
+  // Facilidade: copia os pesos e o início do 2º bimestre da matéria atual
+  m.config = { ...materia().config };
+  estado.materias.push(m);
+  estado.materiaAtual = m.id;
+  salvar();
+  render();
+});
+
+// Nome da matéria
+$("nomeMateria").addEventListener("input", (e) => {
+  materia().nome = e.target.value;
+  salvar();
+  renderLateral();
+});
+
+// Excluir matéria
+$("btnExcluirMateria").addEventListener("click", async () => {
+  const m = materia();
+  if (!confirm(`Excluir a matéria “${m.nome}” com todas as turmas, chamadas e notas? (Exporte um backup antes!)`)) return;
+  for (const t of m.turmas) await apagarPdf(t.id);
+  estado.materias = estado.materias.filter((x) => x !== m);
+  if (!estado.materias.length) estado.materias.push(novaMateria());
+  estado.materiaAtual = estado.materias[0].id;
+  salvar();
+  render();
+});
+
+// Adicionar turma(s): dá para escolher vários PDFs de uma vez
 $("arquivoPdf").addEventListener("change", async (evento) => {
-  const arquivo = evento.target.files[0];
-  if (!arquivo) return;
-  try {
-    $("statusPdf").textContent = "Lendo o PDF…";
-    // arrayBuffer() lê o arquivo do seu computador para a memória da página
-    bytesPdf = new Uint8Array(await arquivo.arrayBuffer());
-    nomePdf = arquivo.name.replace(/\.pdf$/i, "");
-    const paginas = await lerPdfEmBranco(bytesPdf);
-
-    // Junta os alunos de todas as páginas (sem repetir), na ordem em que aparecem
-    const doPdf = new Map();
-    for (const pg of paginas) for (const [ra, { nome }] of pg.alunos) doPdf.set(ra, nome);
-    if (!doPdf.size) throw new Error("Não encontrei alunos no PDF. É mesmo um diário em branco?");
-
-    // Mescla com o que já estava salvo: mantém os dados e acrescenta alunos novos
-    const jaTinha = new Set(estado.alunos.map((a) => a.ra));
-    const novos = [...doPdf].filter(([ra]) => !jaTinha.has(ra));
-    if (!estado.alunos.length) {
-      estado.alunos = [...doPdf].map(([ra, nome]) => ({ ra, nome }));
-    } else {
-      estado.alunos.push(...novos.map(([ra, nome]) => ({ ra, nome })));
+  const erros = [];
+  for (const arquivo of evento.target.files) {
+    try {
+      await abrirPdfTurma(arquivo);
+    } catch (erro) {
+      erros.push(erro.message);
     }
-    const foraDoPdf = estado.alunos.filter((a) => !doPdf.has(a.ra));
-    salvar();
-    render();
-
-    const tipos = paginas.map((p) => p.tipo === "frequencia" ? `freq. ${p.bimestre}º` :
-      p.tipo === "conteudo" ? `conteúdo ${p.bimestre}º` : "?").join(", ");
-    $("statusPdf").textContent = `${arquivo.name}: ${doPdf.size} alunos, ${paginas.length} páginas (${tipos}).`;
-    if (jaTinha.size && novos.length) alert(`${novos.length} aluno(s) novo(s) adicionado(s) à lista.`);
-    if (foraDoPdf.length) {
-      alert("Atenção: estes alunos estão salvos, mas não aparecem neste PDF:\n" +
-        foraDoPdf.map((a) => `${a.ra} ${a.nome}`).join("\n") +
-        "\n\nSe for outra turma, exporte um backup e use 'Começar do zero'.");
-    }
-  } catch (erro) {
-    bytesPdf = null;
-    $("statusPdf").textContent = "Erro: " + erro.message;
-  } finally {
-    evento.target.value = ""; // permite abrir o mesmo arquivo de novo
   }
+  evento.target.value = ""; // permite abrir o mesmo arquivo de novo
+  if (erros.length) alert(erros.join("\n"));
 });
 
 // Configurações
 $("cfgPesoProva").addEventListener("input", (e) => {
-  estado.config.pesoProva = e.target.value; marcarInvalido(e.target); salvar(); renderNotas();
+  materia().config.pesoProva = e.target.value; marcarInvalido(e.target); salvar(); renderNotas();
 });
 $("cfgPesoAtiv").addEventListener("input", (e) => {
-  estado.config.pesoAtiv = e.target.value; marcarInvalido(e.target); salvar(); renderNotas();
+  materia().config.pesoAtiv = e.target.value; marcarInvalido(e.target); salvar(); renderNotas();
 });
 $("cfgInicio2").addEventListener("change", (e) => {
-  estado.config.inicio2bim = e.target.value; salvar(); renderAulas(); renderChamada();
+  materia().config.inicio2bim = e.target.value; salvar(); renderAulas(); renderChamada();
 });
 
-// Adicionar uma data
+// Período do gerador (guardado na matéria)
+$("gerDe").addEventListener("change", (e) => { materia().calendario.de = e.target.value; salvar(); renderCalendario(); });
+$("gerAte").addEventListener("change", (e) => { materia().calendario.ate = e.target.value; salvar(); });
+
+// Adicionar as datas do gerador (semanal/quinzenal)
+$("btnGerar").addEventListener("click", () => {
+  const { de, ate, regras } = materia().calendario;
+  if (!de || !ate) return alert("Preencha 'De' e 'até'.");
+  if (ate < de) return alert("A data 'até' é antes da data 'De'.");
+  if (!Object.keys(regras).length) return alert("Escolha a frequência de pelo menos um dia da semana.");
+  for (const [num, regra] of Object.entries(regras)) {
+    const nome = DIAS_SEMANA.find(([n]) => n === Number(num))[1];
+    if (regra.freq !== "quinzenal") continue;
+    if (!regra.inicio) return alert(`Informe a 1ª aula quinzenal de ${nome}.`);
+    if (new Date(paraUTC(regra.inicio)).getUTCDay() !== Number(num)) {
+      return alert(`A 1ª aula quinzenal de ${nome} (${dataBR(regra.inicio)}) não cai numa ${nome.toLowerCase()}.`);
+    }
+  }
+  const novas = adicionarDatas(gerarDatasCalendario(de, ate, regras));
+  alert(`${novas} data(s) nova(s) adicionada(s).`);
+});
+
+// Adicionar uma data avulsa
 $("btnAddData").addEventListener("click", () => {
   const d = $("novaData").value;
   if (!d) return alert("Escolha uma data.");
   adicionarDatas([d]);
 });
 
-// Gerar datas semanais entre duas datas
-$("btnGerar").addEventListener("click", () => {
-  const de = $("gerDe").value;
-  const ate = $("gerAte").value;
-  const dias = [...document.querySelectorAll("#gerDias input:checked")].map((c) => Number(c.value));
-  if (!de || !ate || !dias.length) return alert("Preencha 'de', 'até' e marque os dias da semana.");
-  const novas = [];
-  // Usamos UTC (horário universal) para não sofrer com horário de verão
-  const { ano, mes, dia } = partesData(de);
-  for (let t = Date.UTC(ano, mes - 1, dia); ; t += 86400000) {
-    const iso = new Date(t).toISOString().slice(0, 10);
-    if (iso > ate) break;
-    if (dias.includes(new Date(t).getUTCDay())) novas.push(iso);
+// Exportar backup: TODAS as matérias (e, se marcado, os PDFs em branco)
+$("btnExportar").addEventListener("click", async () => {
+  const copia = JSON.parse(JSON.stringify(estado));
+  if ($("backupComPdfs").checked) {
+    copia.pdfs = {};
+    for (const m of estado.materias) {
+      for (const t of m.turmas) {
+        const bytes = await obterPdf(t.id);
+        if (bytes) copia.pdfs[t.id] = paraBase64(bytes);
+      }
+    }
   }
-  adicionarDatas(novas);
+  baixarArquivo(JSON.stringify(copia, null, 2), `diario-backup-${hojeISO()}.json`, "application/json");
 });
 
-// Exportar backup
-$("btnExportar").addEventListener("click", () => {
-  baixarArquivo(JSON.stringify(estado, null, 2), `diario-backup-${hojeISO()}.json`, "application/json");
-});
-
-// Importar backup
+// Importar backup (substitui tudo)
 $("arquivoBackup").addEventListener("change", async (evento) => {
   const arquivo = evento.target.files[0];
+  evento.target.value = "";
   if (!arquivo) return;
   try {
-    const novo = normalizarEstado(JSON.parse(await arquivo.text()));
-    if (estado.alunos.length && !confirm("Substituir os dados atuais pelos do backup?")) return;
+    const bruto = JSON.parse(await arquivo.text());
+    const novo = normalizarEstado(bruto);
+    const qtd = novo.materias.length;
+    if (!confirm(`Substituir TUDO pelo backup (${qtd} matéria(s))?`)) return;
     estado = novo;
+    // Restaura os PDFs que vieram dentro do backup
+    for (const [turmaId, base64] of Object.entries(bruto.pdfs || {})) {
+      await guardarPdf(turmaId, deBase64(base64));
+    }
     salvar();
     render();
   } catch (erro) {
     alert("Não consegui importar: " + erro.message);
-  } finally {
-    evento.target.value = "";
   }
 });
 
-// Começar do zero
-$("btnLimpar").addEventListener("click", () => {
-  if (!confirm("Apagar TODOS os dados salvos neste navegador? (Exporte um backup antes!)")) return;
+// Apagar tudo
+$("btnApagarTudo").addEventListener("click", async () => {
+  if (!confirm("Apagar TODAS as matérias e PDFs guardados neste navegador? (Exporte um backup antes!)")) return;
+  for (const m of estado.materias) for (const t of m.turmas) await apagarPdf(t.id);
   estado = estadoVazio();
   salvar();
   render();
 });
 
-// Gerar o PDF preenchido
-$("btnGerarPdf").addEventListener("click", async () => {
-  if (!bytesPdf) return mostrarAvisos(["Abra o PDF em branco primeiro (passo 1)."], true);
-  const botao = $("btnGerarPdf");
-  botao.disabled = true;
-  const avisos = new Set(); // Set: não repete o mesmo aviso
+// Pasta de saída
+$("nomePasta").addEventListener("input", (e) => { estado.nomePasta = e.target.value; salvar(); });
+$("btnTrocarPasta").addEventListener("click", async () => {
   try {
-    const bytes = await gerarPdfPreenchido(avisos);
-    baixarArquivo(bytes, `${nomePdf}_preenchido.pdf`, "application/pdf");
-    mostrarAvisos([`Diário gerado: ${nomePdf}_preenchido.pdf`, ...avisos]);
+    await obterPastaBase(true);
   } catch (erro) {
-    mostrarAvisos(erro.message.split("\n"), true);
-  } finally {
-    botao.disabled = false;
+    if (erro.name !== "AbortError") alert(erro.message);
   }
 });
 
+// Gerar
+$("btnGerarMateria").addEventListener("click", () => gerarESalvar([materia()]));
+$("btnGerarTodas").addEventListener("click", () => gerarESalvar(estado.materias));
+
 // Se as bibliotecas do CDN não carregaram (sem internet, bloqueio...), avisa
 if (!window.pdfjsLib || !window.PDFLib) {
-  mostrarAvisos(["Não consegui carregar as bibliotecas de PDF (pdf.js / pdf-lib). Verifique a internet e recarregue."], true);
+  mostrarAvisos([{ texto: "Não consegui carregar as bibliotecas de PDF (pdf.js / pdf-lib). Verifique a internet e recarregue.", erro: true }]);
 }
 
-// Primeira vez: desenha a tela com o que estava salvo
+// Primeira vez: desenha a tela com o que estava salvo e descobre
+// quais turmas já têm o PDF guardado e qual pasta foi escolhida.
 render();
+(async () => {
+  try {
+    const chaves = await banco("pdfs", "readonly", (g) => g.getAllKeys());
+    chaves.forEach((k) => turmasComPdf.add(k));
+    renderMateria();
+  } catch { /* navegador sem IndexedDB: os PDFs terão de ser abertos de novo */ }
+  let pasta = null;
+  try { pasta = await bancoLer("ajustes", "pasta"); } catch { /* nada */ }
+  mostrarInfoPasta(pasta);
+})();

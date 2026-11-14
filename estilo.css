@@ -47,10 +47,34 @@ body {
   color: var(--texto);
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-.topo { padding: 20px 16px 4px; max-width: 1200px; margin: 0 auto; }
-.topo h1 { margin: 0 0 4px; font-size: 1.6rem; }
-.aviso-privacidade { margin: 0; color: var(--suave); }
-main { max-width: 1200px; margin: 0 auto; padding: 8px 16px 40px; }
+/* Layout: barra de matérias à esquerda + conteúdo à direita */
+.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
+.lateral {
+  background: var(--cartao);
+  border-right: 1px solid var(--borda);
+  padding: 18px 14px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.lateral h1 { margin: 0; font-size: 1.3rem; }
+.titulo-lateral { font-size: 0.8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--suave); margin: 14px 0 2px; }
+.aviso-privacidade { margin: 0; color: var(--suave); font-size: 0.85rem; }
+.lista-materias { display: flex; flex-direction: column; gap: 3px; }
+.aba-materia {
+  text-align: left; font: inherit; color: var(--texto);
+  background: transparent; border: 1px solid transparent; border-radius: 7px;
+  padding: 7px 10px; cursor: pointer;
+}
+.aba-materia:hover { border-color: var(--borda); }
+.aba-materia.ativa { background: var(--destaque); color: var(--destaque-texto); }
+.aba-materia small { display: block; opacity: .8; font-size: 0.75rem; }
+.botao.largo { width: 100%; text-align: center; }
+.check { font-size: 0.85rem; color: var(--suave); }
+main { max-width: 1200px; width: 100%; padding: 8px 16px 40px; }
+@media (max-width: 800px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .lateral { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--borda); }
+}
 
 .cartao {
   background: var(--cartao);
@@ -148,3 +172,25 @@ input.invalido { border-color: var(--erro); outline: 1px solid var(--erro); }
 .avisos { margin: 10px 0 0; padding-left: 20px; }
 .avisos li { margin: 3px 0; }
 .avisos li.erro { color: var(--erro); }
+
+/* Nome da matéria */
+.espaco { justify-content: space-between; }
+.nome-materia { display: flex; flex-direction: column; gap: 3px; font-size: 0.9rem; flex: 1; min-width: 200px; }
+.nome-materia input { font-size: 1.15rem; font-weight: 600; width: 100%; }
+.largo-input { width: min(420px, 100%) !important; }
+
+/* Turmas */
+.turma {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--borda);
+}
+.turma input[type="text"] { width: 140px; font-weight: 600; }
+.ok { color: var(--c-texto); }
+.falta { color: var(--erro); }
+
+/* Gerador de datas: um dia da semana por linha */
+.tabela-dias td { padding: 3px 8px 3px 0; }
+.tabela-dias select { font: inherit; padding: 4px; border-radius: 6px; border: 1px solid var(--borda); background: var(--fundo); color: var(--texto); }
+
+/* Linha de título de cada turma dentro das tabelas */
+.tabela tr.grupo-turma th { text-align: left; background: var(--fundo); position: sticky; left: 0; }

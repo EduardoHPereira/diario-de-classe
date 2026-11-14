@@ -10,17 +10,24 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
 
 ## Usar a versão web
 
-1. Abra o site (veja "Publicar no GitHub Pages" abaixo) ou, no seu computador,
-   rode `python -m http.server` nesta pasta e acesse http://localhost:8000.
-2. **Abrir PDF em branco**: os alunos (RA e nome) são lidos do PDF.
-3. Preencha o peso da prova, o peso das atividades e o início do 2º bimestre.
-4. Adicione as datas das aulas (uma a uma ou "Gerar várias datas") e o conteúdo de cada uma.
-5. Faça a chamada clicando nas células: vazio → C → F → CF → FC → vazio.
-6. Digite as notas, que viram médias automaticamente.
-7. **Gerar e baixar PDF**.
+1. Abra o site (veja "Publicar" abaixo) ou simplesmente dê dois cliques no `index.html`
+   (Chrome ou Edge; precisa de internet para baixar as bibliotecas de PDF).
+2. Na barra da esquerda, crie uma **matéria** (ex.: Circuitos Elétricos). Cada matéria é uma aba.
+3. **Adicionar turma**: abra o PDF em branco de cada turma (ex.: GELE4N e GELE6N).
+   Os alunos (RA e nome) são lidos do PDF, e o PDF fica guardado no navegador.
+4. Preencha o peso da prova, o peso das atividades e o início do 2º bimestre.
+5. Adicione as datas: escolha o período e, para cada dia da semana, "toda semana" ou "quinzenal".
+   Ex.: quarta toda semana + quinta quinzenal = semanas com 4 aulas e semanas com 2.
+6. Faça a chamada clicando nas células (vazio → C → F → CF → FC → vazio) e digite as notas.
+7. **Gerar diários**: na primeira vez, escolha uma pasta do computador. O app cria dentro dela a
+   subpasta "Diários Preenchidos - 2º bimestre" (o nome pode ser mudado) e salva um PDF por turma,
+   chamado "Matéria - Turma.pdf". Fora do Chrome/Edge, os PDFs são baixados um por um.
 
-O progresso é salvo automaticamente no navegador (`localStorage`). Use **Exportar backup**
-de vez em quando: se você limpar os dados do navegador, o backup é o que salva você.
+As datas, os conteúdos e os pesos são da matéria (valem para todas as turmas). A chamada e as notas são de cada aluno.
+
+O progresso fica salvo no navegador. Use **Exportar backup** de vez em quando: o arquivo `.json`
+leva todas as matérias e, se a opção estiver marcada, os PDFs em branco. Com ele, dá para
+continuar em outro computador (**Importar backup**).
 
 ## Publicar no GitHub Pages
 
