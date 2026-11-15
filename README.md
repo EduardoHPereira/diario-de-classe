@@ -12,8 +12,13 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
 
 1. Abra o site (veja "Publicar" abaixo) ou simplesmente dê dois cliques no `index.html`
    (Chrome ou Edge; precisa de internet para baixar as bibliotecas de PDF).
-2. Na barra da esquerda, crie uma **matéria** (ex.: Circuitos Elétricos). Cada matéria é uma aba.
-3. **Adicionar turma**: abra o PDF em branco de cada turma (ex.: GELE4N e GELE6N).
+2. Clique em **Abrir pasta de diários** e escolha a pasta com os PDFs em branco (podem ter
+   qualquer nome, ex.: "doc (3).pdf"). O app lê o cabeçalho de cada PDF (DISCIPLINA, TURMA, SEM.)
+   e cria sozinho uma **matéria** (aba à esquerda) por disciplina, com uma **turma** por PDF.
+   Ex.: Circuitos Elétricos II com GELET04N, GELET05N e GELET06N.
+   Abrir a pasta de novo só atualiza (não duplica nada). Se a mesma turma aparecer em dois
+   arquivos, fica o mais recente.
+3. Também dá para adicionar um PDF avulso numa matéria com **Adicionar turma**.
    Os alunos (RA e nome) são lidos do PDF, e o PDF fica guardado no navegador.
 4. Preencha o peso da prova, o peso das atividades e o início do 2º bimestre.
 5. Adicione as datas: escolha o período e, para cada dia da semana, "toda semana" ou "quinzenal".

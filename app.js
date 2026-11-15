@@ -163,18 +163,21 @@ function juntarTexto(palavras) {
  * Devolve uma lista, uma entrada por página, por exemplo:
  *   { tipo: "frequencia", bimestre: 1, alunos: Map { "0000000001" => { topo: 124.7, nome: "FULANO ..." } } }
  *   { tipo: "conteudo",   bimestre: 1, alunos: Map {} }
+ * e, em paginas.cabecalho, o que estiver no cabeçalho (veja lerCabecalho).
  */
 async function lerPdfEmBranco(bytesPdf) {
   // .slice() faz uma CÓPIA: o pdf.js "consome" o buffer que recebe,
   // e ainda vamos precisar dos bytes originais para o pdf-lib depois.
   const doc = await pdfjsLib.getDocument({ data: bytesPdf.slice() }).promise;
   const paginas = [];
+  let cabecalho = null;
 
   for (let n = 1; n <= doc.numPages; n++) {
     const pagina = await doc.getPage(n);
     // disableNormalization: não "arrumar" caracteres (ex.: manter o "º" como está)
     const conteudo = await pagina.getTextContent({ disableNormalization: true });
     const { palavras, texto } = montarPalavras(conteudo, pagina);
+    if (n === 1) cabecalho = lerCabecalho(palavras); // disciplina, turma... (só na 1ª página)
 
     // Mesmas regras do Python. (Aceitamos também "2°" com o símbolo de grau,
     // que é fácil de confundir com o "º" ordinal.)
@@ -203,7 +206,46 @@ async function lerPdfEmBranco(bytesPdf) {
     paginas.push({ tipo, bimestre, alunos });
   }
   await doc.destroy();
+  // Uma lista em JavaScript também pode ter "propriedades extras":
+  // penduramos o cabeçalho nela para não mudar o formato da resposta.
+  paginas.cabecalho = cabecalho;
   return paginas;
+}
+
+/*
+ * Lê o cabeçalho do diário. No PDF da UDC ele é assim:
+ *
+ *   DISCIPLINA:              PROFESSOR(A):     TURMA:     CURSO:                       SEM.:
+ *   CIRCUITOS ELÉTRICOS II   FULANO DE TAL     GELET04N   Engenharia Elétrica (...)    2026/2
+ *
+ * Achamos os RÓTULOS (linha de cima) e, para cada um, juntamos as palavras da
+ * linha de baixo que ficam entre ele e o próximo rótulo. Assim não dependemos
+ * de posições exatas. Devolve { disciplina, professor, turma, curso, semestre }
+ * ou null se o PDF não tiver esse cabeçalho.
+ */
+const ROTULOS_CABECALHO = {
+  "DISCIPLINA:": "disciplina", "PROFESSOR(A):": "professor", "TURMA:": "turma",
+  "CURSO:": "curso", "SEM.:": "semestre",
+};
+function lerCabecalho(palavras) {
+  const disc = palavras.find((p) => p.text === "DISCIPLINA:");
+  if (!disc) return null;
+  // Rótulos na mesma linha do "DISCIPLINA:", da esquerda para a direita
+  const rotulos = palavras
+    .filter((p) => ROTULOS_CABECALHO[p.text] && Math.abs(p.top - disc.top) < 3)
+    .sort((a, b) => a.x0 - b.x0);
+  // Valores: a linha logo abaixo dos rótulos (entre 3 e 20 pontos mais para baixo)
+  const valores = palavras.filter((p) => p.top > disc.top + 3 && p.top < disc.top + 20);
+  const cab = {};
+  rotulos.forEach((r, i) => {
+    const fim = i + 1 < rotulos.length ? rotulos[i + 1].x0 : Infinity;
+    cab[ROTULOS_CABECALHO[r.text]] = valores
+      .filter((v) => v.x0 >= r.x0 - 3 && v.x0 < fim - 3)
+      .sort((a, b) => a.x0 - b.x0)
+      .map((v) => v.text)
+      .join(" ");
+  });
+  return cab.disciplina ? cab : null;
 }
 
 // Junta os alunos de todas as páginas (sem repetir), na ordem em que aparecem
@@ -227,7 +269,8 @@ function alunosDoPdf(paginas) {
  *   materias: [{
  *     id, nome: "Circuitos Elétricos",
  *     config:    { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "2026-04-01" },
- *     turmas:    [ { id, nome: "GELE4N", arquivo: "GELE4N.pdf",
+ *     chave: "CIRCUITOS ELÉTRICOS II|2026/2",       // lida do cabeçalho do PDF
+ *     turmas:    [ { id, nome: "GELET04N", codigo: "GELET04N", curso, arquivo: "doc (3).pdf",
  *                    alunos: [ { ra: "0000000001", nome: "FULANO ..." } ] } ],
  *     datas:     [ "2026-02-10", "2026-02-11", ... ],   // sempre em ordem
  *     presencas: { "0000000001": { "2026-02-10": "C", "2026-02-11": "CF" } },
@@ -251,6 +294,7 @@ function novaMateria(nome = "Nova matéria") {
   return {
     id: novoId(),
     nome,
+    chave: "", // "DISCIPLINA|SEMESTRE" lido do PDF: serve para achar a matéria de novo
     config: { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "" },
     turmas: [],
     datas: [],
@@ -273,6 +317,7 @@ function normalizarMateria(obj) {
     ...base,
     id: obj.id || base.id,
     nome: String(obj.nome ?? base.nome),
+    chave: String(obj.chave || ""),
     config: { ...base.config, ...(obj.config || {}) },
     turmas: Array.isArray(obj.turmas) ? obj.turmas : [],
     datas: Array.isArray(obj.datas) ? obj.datas.filter(ehDataValida) : [],
@@ -285,6 +330,8 @@ function normalizarMateria(obj) {
   m.turmas = m.turmas.map((t) => ({
     id: t.id || novoId(),
     nome: String(t.nome || "Turma"),
+    codigo: String(t.codigo || ""), // código lido do PDF (ex.: GELET04N)
+    curso: String(t.curso || ""),
     arquivo: String(t.arquivo || ""),
     alunos: (Array.isArray(t.alunos) ? t.alunos : [])
       .filter((a) => a && a.ra)
@@ -1028,40 +1075,159 @@ function renderMateria() {
     remover.addEventListener("click", () => removerTurma(t));
 
     lista.append(el("div", { className: "turma" },
-      nome, el("span", { textContent: `${t.alunos.length} alunos` }), status, trocar, remover));
+      nome, el("span", { textContent: `${t.alunos.length} alunos`, title: [t.curso, t.arquivo].filter(Boolean).join(" · ") }),
+      status, trocar, remover));
   }
 }
 
-/*
- * Abre um PDF em branco. Se "turma" for informada, atualiza essa turma;
- * senão, procura uma turma com o mesmo nome de arquivo ou cria uma nova.
- */
-async function abrirPdfTurma(arquivo, turma = null) {
-  const m = materia();
-  const bytes = new Uint8Array(await arquivo.arrayBuffer()); // lê o arquivo para a memória
-  const paginas = await lerPdfEmBranco(bytes);
-  const doPdf = alunosDoPdf(paginas);
-  if (!doPdf.size) throw new Error(`${arquivo.name}: não encontrei alunos. É mesmo um diário em branco?`);
+// Chave que identifica a matéria no cabeçalho: "CIRCUITOS ELÉTRICOS II|2026/2"
+function chaveDoCabecalho(cab) {
+  return `${cab.disciplina}|${cab.semestre || ""}`;
+}
 
-  turma ??= m.turmas.find((t) => t.arquivo === arquivo.name);
-  if (!turma) {
-    turma = { id: novoId(), nome: arquivo.name.replace(/\.pdf$/i, ""), arquivo: arquivo.name, alunos: [] };
-    m.turmas.push(turma);
-  }
+/*
+ * Põe o conteúdo de um PDF já lido dentro de uma turma: atualiza código/curso,
+ * acrescenta alunos novos (mantendo os antigos) e guarda o PDF no navegador.
+ * Devolve os alunos que estavam salvos mas sumiram do PDF (para avisar).
+ */
+async function aplicarPdfNaTurma(turma, arquivo, bytes, paginas) {
+  const doPdf = alunosDoPdf(paginas);
+  const cab = paginas.cabecalho;
   turma.arquivo = arquivo.name;
+  if (cab?.turma) turma.codigo = cab.turma;
+  if (cab?.curso) turma.curso = cab.curso;
 
   // Mantém os alunos que já estavam e acrescenta os novos, na ordem do PDF
   const jaTinha = new Set(turma.alunos.map((a) => a.ra));
   for (const [ra, nome] of doPdf) if (!jaTinha.has(ra)) turma.alunos.push({ ra, nome });
-  const foraDoPdf = turma.alunos.filter((a) => !doPdf.has(a.ra));
-
   await guardarPdf(turma.id, bytes);
+  return turma.alunos.filter((a) => !doPdf.has(a.ra));
+}
+
+// Lê um arquivo PDF do computador: devolve os bytes e o que foi lido dele
+async function lerArquivoPdf(arquivo) {
+  const bytes = new Uint8Array(await arquivo.arrayBuffer()); // lê o arquivo para a memória
+  const paginas = await lerPdfEmBranco(bytes);
+  if (!alunosDoPdf(paginas).size) throw new Error(`${arquivo.name}: não encontrei alunos. É mesmo um diário em branco?`);
+  return { bytes, paginas };
+}
+
+/*
+ * Abre UM PDF em branco na matéria aberta. Se "turma" for informada, atualiza
+ * essa turma; senão, procura uma turma com o mesmo código (ou arquivo) ou cria uma nova.
+ */
+async function abrirPdfTurma(arquivo, turma = null) {
+  const m = materia();
+  const { bytes, paginas } = await lerArquivoPdf(arquivo);
+  const cab = paginas.cabecalho;
+
+  if (cab) {
+    const chave = chaveDoCabecalho(cab);
+    if (!m.chave && !m.turmas.length) {
+      // Matéria vazia: ganha o nome e a chave da disciplina do PDF
+      m.chave = chave;
+      if (!m.nome || m.nome === "Nova matéria") m.nome = cab.disciplina;
+    } else if (m.chave && m.chave !== chave &&
+      !confirm(`Este PDF é de “${cab.disciplina}” (${cab.turma}), mas a matéria aberta é “${m.nome}”. Adicionar mesmo assim?`)) {
+      return;
+    }
+  }
+
+  turma ??= m.turmas.find((t) => (cab?.turma && t.codigo === cab.turma) || t.arquivo === arquivo.name);
+  if (!turma) {
+    turma = { id: novoId(), nome: cab?.turma || arquivo.name.replace(/\.pdf$/i, ""),
+      codigo: "", curso: "", arquivo: "", alunos: [] };
+    m.turmas.push(turma);
+  }
+  const foraDoPdf = await aplicarPdfNaTurma(turma, arquivo, bytes, paginas);
   salvar();
   render();
   if (foraDoPdf.length) {
     alert(`Atenção (${turma.nome}): estes alunos estavam salvos, mas não aparecem neste PDF:\n` +
       foraDoPdf.map((a) => `${a.ra} ${a.nome}`).join("\n"));
   }
+}
+
+/*
+ * Abre uma PASTA inteira de diários em branco e organiza tudo sozinho:
+ *   - lê o cabeçalho de cada PDF (disciplina, turma, semestre);
+ *   - PDFs da mesma disciplina e semestre viram UMA matéria, com uma turma por PDF;
+ *   - matérias e turmas que já existiam são atualizadas (nada é apagado);
+ *   - se a mesma turma aparecer duas vezes, fica o arquivo mais recente.
+ */
+async function importarPasta(arquivos) {
+  const pdfs = [...arquivos].filter((f) => /\.pdf$/i.test(f.name));
+  if (!pdfs.length) return alert("Não encontrei arquivos PDF nessa pasta.");
+
+  // 1) Lê todos os PDFs e agrupa por disciplina
+  const grupos = new Map(); // chave -> { cab, turmas: Map(código -> { arquivo, bytes, paginas, cab }) }
+  const problemas = [];
+  for (const arquivo of pdfs) {
+    try {
+      const lido = await lerArquivoPdf(arquivo);
+      const cab = lido.paginas.cabecalho;
+      if (!cab || !cab.turma) {
+        problemas.push(`${arquivo.name}: não achei a disciplina/turma no cabeçalho (use “Adicionar turma”).`);
+        continue;
+      }
+      const chave = chaveDoCabecalho(cab);
+      if (!grupos.has(chave)) grupos.set(chave, { cab, turmas: new Map() });
+      const turmas = grupos.get(chave).turmas;
+      const anterior = turmas.get(cab.turma);
+      if (anterior) {
+        // Mesma disciplina e turma duas vezes: fica o arquivo modificado por último
+        const fica = arquivo.lastModified >= anterior.arquivo.lastModified ? arquivo : anterior.arquivo;
+        const sai = fica === arquivo ? anterior.arquivo : arquivo;
+        problemas.push(`${cab.disciplina} – ${cab.turma} aparece em dois arquivos; usei “${fica.name}” (mais recente) e ignorei “${sai.name}”.`);
+        if (fica !== arquivo) continue;
+      }
+      turmas.set(cab.turma, { arquivo, ...lido, cab });
+    } catch (erro) {
+      problemas.push(erro.message);
+    }
+  }
+
+  // 2) Se só existe a matéria inicial vazia, ela sai (vai ser substituída)
+  const vazia = (m) => !m.turmas.length && !m.datas.length && !m.chave;
+  if (grupos.size) estado.materias = estado.materias.filter((m) => !vazia(m));
+
+  // 3) Cria/atualiza as matérias, em ordem alfabética
+  let novasMaterias = 0, novasTurmas = 0, primeira = null;
+  const ordenados = [...grupos].sort((a, b) => a[1].cab.disciplina.localeCompare(b[1].cab.disciplina, "pt"));
+  for (const [chave, { cab, turmas }] of ordenados) {
+    let m = estado.materias.find((x) => x.chave === chave);
+    if (!m) {
+      m = novaMateria(cab.disciplina);
+      m.chave = chave;
+      // Facilidade: começa com os mesmos pesos/início do 2º bimestre de outra matéria
+      if (estado.materias[0]) m.config = { ...estado.materias[0].config };
+      estado.materias.push(m);
+      novasMaterias++;
+    }
+    primeira ??= m;
+    const codigos = [...turmas.keys()].sort();
+    for (const codigo of codigos) {
+      const { arquivo, bytes, paginas } = turmas.get(codigo);
+      let t = m.turmas.find((x) => x.codigo === codigo);
+      if (!t) {
+        t = { id: novoId(), nome: codigo, codigo, curso: "", arquivo: "", alunos: [] };
+        m.turmas.push(t);
+        novasTurmas++;
+      }
+      const sumiram = await aplicarPdfNaTurma(t, arquivo, bytes, paginas);
+      if (sumiram.length) problemas.push(`${m.nome} – ${t.nome}: ${sumiram.length} aluno(s) salvos não estão mais no PDF.`);
+    }
+  }
+  if (!estado.materias.length) estado.materias.push(novaMateria());
+  if (primeira && !estado.materias.some((m) => m.id === estado.materiaAtual)) estado.materiaAtual = primeira.id;
+  if (primeira && vazia(materia())) estado.materiaAtual = primeira.id;
+  salvar();
+  render();
+
+  const totalTurmas = [...grupos.values()].reduce((s, g) => s + g.turmas.size, 0);
+  alert(`${pdfs.length} PDF(s) lidos: ${grupos.size} matéria(s) (${novasMaterias} nova(s)) e ` +
+    `${totalTurmas} turma(s) (${novasTurmas} nova(s)).` +
+    (problemas.length ? "\n\nAtenção:\n• " + problemas.join("\n• ") : ""));
 }
 
 async function removerTurma(t) {
@@ -1395,6 +1561,19 @@ $("btnExcluirMateria").addEventListener("click", async () => {
   estado.materiaAtual = estado.materias[0].id;
   salvar();
   render();
+});
+
+// Abrir uma pasta de diários: cria as matérias e turmas sozinho
+$("arquivoPasta").addEventListener("change", async (evento) => {
+  const arquivos = [...evento.target.files];
+  evento.target.value = "";
+  if (!arquivos.length) return;
+  $("statusPasta").textContent = `Lendo ${arquivos.length} arquivo(s)…`;
+  try {
+    await importarPasta(arquivos);
+  } finally {
+    $("statusPasta").textContent = "";
+  }
 });
 
 // Adicionar turma(s): dá para escolher vários PDFs de uma vez

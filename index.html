@@ -28,6 +28,13 @@
       <p class="aviso-privacidade">Tudo fica no seu navegador. Nada é enviado a lugar nenhum.</p>
 
       <h2 class="titulo-lateral">Matérias</h2>
+      <!-- "webkitdirectory" faz o navegador escolher uma PASTA em vez de arquivos.
+           Ele pode dizer "enviar arquivos", mas nada sai do computador: só esta página lê. -->
+      <label class="botao largo principal">
+        Abrir pasta de diários…
+        <input type="file" id="arquivoPasta" webkitdirectory multiple hidden>
+      </label>
+      <span id="statusPasta" class="check"></span>
       <nav id="listaMaterias" class="lista-materias" aria-label="Matérias"></nav>
       <button type="button" class="botao largo" id="btnNovaMateria">+ Nova matéria</button>
 
