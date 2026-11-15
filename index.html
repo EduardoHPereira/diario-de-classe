@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diário de Classe</title>
+  <link rel="stylesheet" href="estilo.css">
+
+  <!--
+    Bibliotecas vindas de CDN (versões fixas, para nada mudar sem querermos):
+      - pdf.js  : LÊ o PDF (equivale ao pdfplumber do diario.py)
+      - pdf-lib : ESCREVE no PDF (equivale ao reportlab + pypdf)
+    O atributo "integrity" é uma impressão digital do arquivo: se o CDN
+    entregar algo diferente, o navegador se recusa a rodar.
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"
+          integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"
+          integrity="sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI"
+          crossorigin="anonymous"></script>
+</head>
+<body>
+  <div class="layout">
+    <!-- ============ BARRA LATERAL: MATÉRIAS ============ -->
+    <aside class="lateral">
+      <h1>Diário de Classe</h1>
+      <p class="aviso-privacidade">Tudo fica no seu navegador. Nada é enviado a lugar nenhum.</p>
+
+      <h2 class="titulo-lateral">Matérias</h2>
+      <nav id="listaMaterias" class="lista-materias" aria-label="Matérias"></nav>
+      <button type="button" class="botao largo" id="btnNovaMateria">+ Nova matéria</button>
+
+      <h2 class="titulo-lateral">Backup</h2>
+      <button type="button" class="botao largo" id="btnExportar">Exportar backup (.json)</button>
+      <label class="check"><input type="checkbox" id="backupComPdfs" checked> incluir os PDFs em branco</label>
+      <label class="botao largo">
+        Importar backup…
+        <input type="file" id="arquivoBackup" accept="application/json,.json" hidden>
+      </label>
+      <button type="button" class="botao largo perigo" id="btnApagarTudo">Apagar tudo</button>
+    </aside>
+
+    <main>
+      <!-- ============ 1. MATÉRIA E TURMAS ============ -->
+      <section class="cartao">
+        <div class="linha-botoes espaco">
+          <label class="nome-materia">Matéria
+            <input type="text" id="nomeMateria" placeholder="Ex.: Circuitos Elétricos">
+          </label>
+          <button type="button" class="botao perigo" id="btnExcluirMateria">Excluir matéria</button>
+        </div>
+        <h2>1. Turmas (um PDF em branco para cada)</h2>
+        <div id="listaTurmas"></div>
+        <label class="botao principal">
+          + Adicionar turma (abrir PDF em branco)…
+          <input type="file" id="arquivoPdf" accept="application/pdf,.pdf" multiple hidden>
+        </label>
+        <p class="dica">Ex.: GELE4N e GELE6N assistindo Circuitos Elétricos juntas: adicione os dois PDFs aqui.
+          As datas e os conteúdos valem para todas as turmas; cada turma gera o seu próprio diário.</p>
+      </section>
+
+      <!-- ============ 2. CONFIGURAÇÕES ============ -->
+      <section class="cartao">
+        <h2>2. Configurações</h2>
+        <div class="grade-config">
+          <label>Peso da prova <input type="text" inputmode="decimal" id="cfgPesoProva"></label>
+          <label>Peso das atividades <input type="text" inputmode="decimal" id="cfgPesoAtiv"></label>
+          <label>Início do 2º bimestre <input type="date" id="cfgInicio2"></label>
+        </div>
+        <p class="dica">Média = (prova × peso da prova + atividades × peso das atividades) ÷ (soma dos pesos).
+          Aulas antes do início do 2º bimestre vão para o 1º. Cada data vale 2 aulas (2 colunas no diário).</p>
+      </section>
+
+      <!-- ============ 3. DATAS E CONTEÚDO ============ -->
+      <section class="cartao">
+        <h2>3. Aulas (datas e conteúdo)</h2>
+        <details class="gerador" id="gerador">
+          <summary>Adicionar datas pelo calendário da matéria (semanal ou quinzenal)</summary>
+          <div class="linha-botoes">
+            <label>De <input type="date" id="gerDe"></label>
+            <label>até <input type="date" id="gerAte"></label>
+          </div>
+          <table class="tabela-dias">
+            <tbody id="gerDias"><!-- preenchido pelo app.js --></tbody>
+          </table>
+          <p class="dica">Quinzenal = uma semana sim, outra não, a partir da data indicada.
+            Ex.: quarta “toda semana” + quinta “quinzenal” → semanas com 4 aulas e semanas com 2.</p>
+          <button type="button" class="botao" id="btnGerar">Adicionar essas datas</button>
+        </details>
+        <div class="linha-botoes">
+          <input type="date" id="novaData" aria-label="Data avulsa">
+          <button type="button" class="botao" id="btnAddData">Adicionar data avulsa</button>
+        </div>
+        <p id="resumoBimestres" class="dica"></p>
+        <div id="listaAulas"></div>
+      </section>
+
+      <!-- ============ 4. CHAMADA ============ -->
+      <section class="cartao">
+        <h2>4. Chamada</h2>
+        <p class="dica">Clique na célula para alternar: vazio → C → F → CF → FC → vazio.
+          (CF = presente na 1ª aula e faltou na 2ª.) O botão “C” no cabeçalho marca presença em todos os vazios do dia.</p>
+        <div class="rolagem"><table id="tabelaChamada" class="tabela"></table></div>
+      </section>
+
+      <!-- ============ 5. NOTAS ============ -->
+      <section class="cartao">
+        <h2>5. Notas</h2>
+        <p class="dica">Aceita vírgula ou ponto (ex.: 7,5). Deixe em branco se ainda não tiver a nota.</p>
+        <div class="rolagem"><table id="tabelaNotas" class="tabela"></table></div>
+      </section>
+
+      <!-- ============ 6. GERAR ============ -->
+      <section class="cartao">
+        <h2>6. Gerar os diários preenchidos</h2>
+        <div class="grade-config">
+          <label>Nome da pasta a criar
+            <input type="text" id="nomePasta" class="largo-input">
+          </label>
+        </div>
+        <p id="infoPasta" class="dica"></p>
+        <div class="linha-botoes">
+          <button type="button" class="botao principal" id="btnGerarMateria">Gerar diários desta matéria</button>
+          <button type="button" class="botao principal" id="btnGerarTodas">Gerar diários de TODAS as matérias</button>
+          <button type="button" class="botao" id="btnTrocarPasta">Escolher outra pasta</button>
+        </div>
+        <ul id="avisos" class="avisos"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

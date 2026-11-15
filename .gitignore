@@ -1,0 +1,5 @@
+# Arquivos com dados de alunos NUNCA devem ir para o GitHub (o site é público!)
+*.pdf
+*.xlsx
+diario-backup-*.json
+__pycache__/
