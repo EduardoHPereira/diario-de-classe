@@ -51,43 +51,23 @@
         <input type="file" id="arquivoBackup" accept="application/json,.json" hidden>
       </label>
       <button type="button" class="botao largo perigo" id="btnApagarTudo">Apagar tudo</button>
-      <p class="versao">Diário de Classe <strong>v1.1</strong></p>
+      <p class="versao">Diário de Classe <strong>v1.2</strong></p>
       </div>
     </aside>
 
     <main>
-      <!-- ============ AULA DE HOJE: a chamada do dia, pensada para usar em sala ============ -->
-      <section class="cartao hoje" id="cartaoHoje">
-        <h2 id="tituloHoje">Aula de hoje</h2>
-        <div class="linha-botoes">
-          <button type="button" class="botao" id="hojeAnterior" aria-label="Aula anterior">◀</button>
-          <select id="hojeData" aria-label="Data da aula"></select>
-          <button type="button" class="botao" id="hojeProxima" aria-label="Próxima aula">▶</button>
-          <button type="button" class="botao" id="hojeAdicionar" hidden></button>
-        </div>
-        <div id="hojeCorpo">
-          <label class="conteudo-hoje">Conteúdo desta aula
-            <input type="text" id="hojeConteudo" placeholder="Ex.: Amplificadores operacionais — exercícios">
-          </label>
-          <div class="linha-botoes">
-            <button type="button" class="botao principal" id="hojeTodos">✓ Todos presentes</button>
-            <span id="hojeResumo" class="dica"></span>
-          </div>
-          <p class="dica">Toque em <strong>“Todos presentes”</strong> e depois na aula em que o aluno <strong>faltou</strong>
-            (cada toque alterna C ↔ F). Num aluno ainda sem chamada, o toque marca falta naquela aula e presença na outra.</p>
-          <div id="hojeLista" class="hoje-lista"></div>
-        </div>
-        <p id="hojeVazio" class="dica" hidden></p>
-      </section>
+      <!-- ============ NOME DA MATÉRIA (sempre visível) ============ -->
+      <div class="cabecalho-materia linha-botoes espaco">
+        <label class="nome-materia">Matéria
+          <input type="text" id="nomeMateria" placeholder="Ex.: Circuitos Elétricos">
+        </label>
+        <button type="button" class="botao perigo" id="btnExcluirMateria">Excluir matéria</button>
+      </div>
+      <p class="dica">Clique no título de um cartão para recolher ou expandir.</p>
 
-      <!-- ============ 1. MATÉRIA E TURMAS ============ -->
-      <section class="cartao">
-        <div class="linha-botoes espaco">
-          <label class="nome-materia">Matéria
-            <input type="text" id="nomeMateria" placeholder="Ex.: Circuitos Elétricos">
-          </label>
-          <button type="button" class="botao perigo" id="btnExcluirMateria">Excluir matéria</button>
-        </div>
+      <!-- ============ 1. TURMAS ============ -->
+      <!-- data-cartao: nome usado para lembrar se o cartão está recolhido -->
+      <section class="cartao" data-cartao="turmas">
         <h2>1. Turmas (um PDF em branco para cada)</h2>
         <div id="listaTurmas"></div>
         <label class="botao principal">
@@ -99,7 +79,7 @@
       </section>
 
       <!-- ============ 2. BIMESTRES E COMPOSIÇÃO DA NOTA ============ -->
-      <section class="cartao">
+      <section class="cartao" data-cartao="bimestres">
         <h2>2. Bimestres e composição da nota</h2>
         <div class="grade-config">
           <label>Início do 2º bimestre (vale para todas as matérias)
@@ -126,7 +106,7 @@
       </section>
 
       <!-- ============ 3. DATAS E CONTEÚDO ============ -->
-      <section class="cartao">
+      <section class="cartao" data-cartao="aulas">
         <h2>3. Aulas (datas e conteúdo)</h2>
         <details class="gerador" id="gerador">
           <summary>Adicionar datas pelo calendário da matéria (semanal ou quinzenal)</summary>
@@ -146,13 +126,14 @@
           <button type="button" class="botao" id="btnAddData">Adicionar data avulsa</button>
           <!-- Adiciona a próxima data do calendário da matéria (ex.: a próxima sexta) -->
           <button type="button" class="botao" id="btnProxima">+ Próxima aula</button>
+          <button type="button" class="botao principal" id="btnHoje">+ Aula de hoje</button>
         </div>
         <p id="resumoBimestres" class="dica"></p>
         <div id="listaAulas"></div>
       </section>
 
       <!-- ============ 4. CHAMADA ============ -->
-      <section class="cartao">
+      <section class="cartao" data-cartao="chamada">
         <h2>4. Chamada</h2>
         <p class="dica">Clique na célula para alternar: vazio → C → F → CF → FC → vazio.
           (CF = presente na 1ª aula e faltou na 2ª.) O botão “C” no cabeçalho marca presença em todos os vazios do dia.</p>
@@ -163,7 +144,7 @@
       </section>
 
       <!-- ============ 5. NOTAS ============ -->
-      <section class="cartao">
+      <section class="cartao" data-cartao="notas">
         <h2>5. Notas</h2>
         <p class="dica">Notas de 0 a 10, com vírgula ou ponto (ex.: 7,5). Deixe em branco se ainda não tiver a nota.
           <strong>Enter</strong> (ou ↓) desce para o próximo aluno; <strong>Shift+Enter</strong> (ou ↑) sobe.
@@ -173,7 +154,7 @@
       </section>
 
       <!-- ============ 6. GERAR ============ -->
-      <section class="cartao">
+      <section class="cartao" data-cartao="gerar">
         <h2>6. Gerar os diários preenchidos</h2>
         <div class="grade-config">
           <label>Nome da pasta a criar

@@ -32,13 +32,10 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
    Ex.: quarta toda semana + quinta quinzenal = semanas com 4 aulas e semanas com 2.
    O botão **+ Próxima aula** adiciona a próxima data do calendário depois da última aula da lista
    (ex.: matéria às sextas → a próxima sexta).
-6. **Aula de hoje** (no topo, pensada para o celular em sala): escolha a data (ou "+ Dar aula hoje"),
-   escreva o conteúdo, toque em **Todos presentes** e depois na aula (1ª ou 2ª) em que o aluno faltou.
-   A tabela completa da chamada continua na seção 4 (clique alterna vazio → C → F → CF → FC → vazio).
+6. Faça a chamada no cartão **4. Chamada**: o clique na célula alterna vazio → C → F → CF → FC → vazio.
+   O botão **+ Aula de hoje** (cartão 3) adiciona a data de hoje à lista com um clique.
    **Notas** (de 0 a 10): Enter desce para o próximo aluno, e dá para colar colunas do Excel (Ctrl+V).
-   **Ingresso:** antes da data de ingresso do aluno, o diário fica em branco e as faltas não contam.
-   Automático = 1ª presença. Para quem está desde o início e faltou as primeiras aulas (ou nunca veio
-   mas ganhou um "C"), digite a data certa na coluna "Ingresso". Sem nenhuma presença, tudo conta.
+   Clique no título de qualquer cartão para **recolher ou expandir**; o app lembra a escolha.
 7. **Prévia do PDF**: mostra na tela o diário de uma turma, sem salvar nada.
 8. **Gerar diários**: na primeira vez, escolha uma pasta do computador. O app cria dentro dela a
    subpasta "Diários Preenchidos - 2º bimestre" (o nome pode ser mudado) e salva um PDF por turma,

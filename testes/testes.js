@@ -230,33 +230,32 @@ async function preencherDados(pagina, dados) {
   confere(await campo(0, 1).evaluate((e) => e.classList.contains("invalido") && /0 e 10/.test(e.title)), "nota 11 fica vermelha, com a explicação");
 
   // ===================================================================
-  secao("5. Aula de hoje (chamada em sala)");
+  secao("5. Botão “+ Aula de hoje” e cartões recolhíveis");
   const hoje = await pagina.evaluate(() => hojeISO());
-  confere(await pagina.isVisible("#hojeAdicionar"), "sem aula hoje na lista: mostra “+ Dar aula hoje”");
-  await pagina.click("#hojeAdicionar");
-  confere(await pagina.inputValue("#hojeData") === hoje, "criou a aula de hoje e já mostra ela");
-  confere(!(await pagina.isVisible("#hojeAdicionar")), "o botão “+ Dar aula hoje” some depois de criada a aula");
-  confere((await pagina.textContent("#hojeResumo")).includes("4 sem chamada"), "avisa: 4 alunos sem chamada");
-  await pagina.click("#hojeTodos");
-  confere((await pagina.textContent("#hojeResumo")).startsWith("4 presente(s) · 0 com falta"), "“Todos presentes” marca os 4");
-  const botao = (i, k) => pagina.locator(".hoje-aluno").nth(i).locator(".aula-btn").nth(k);
-  await botao(1, 1).click();                       // 2º aluno faltou à 2ª aula
-  await botao(2, 0).click(); await botao(2, 1).click(); // 3º aluno faltou às duas
-  const pres = await pagina.evaluate((d) => Object.values(materia().presencas).map((p) => p[d]), hoje);
-  confere(JSON.stringify(pres) === JSON.stringify(["C", "CF", "F", "C"]), "toques nas aulas: C | CF | F | C", JSON.stringify(pres));
-  confere(await pagina.locator("#tabelaChamada .celula.v-CF").count() === 1, "a tabela de chamada (seção 4) acompanha");
-  await pagina.fill("#hojeConteudo", "Revisão para a prova");
-  await pagina.dispatchEvent("#hojeConteudo", "change");
-  confere(await pagina.evaluate((d) => materia().conteudos[d], hoje) === "Revisão para a prova", "conteúdo da aula salvo");
-  await pagina.locator(".hoje-aluno").nth(0).locator(".limpar-btn").click();
-  confere((await pagina.textContent("#hojeResumo")).includes("1 sem chamada"), "× apaga a chamada de um aluno");
+  confere(await pagina.isVisible("#btnHoje") && (await pagina.textContent("#btnHoje")).includes(
+    await pagina.evaluate((d) => dataBR(d), hoje)), "botão “+ Aula de hoje” mostra a data de hoje");
+  await pagina.click("#btnHoje");
+  confere(await pagina.evaluate((d) => materia().datas.includes(d), hoje), "clicar adiciona a aula de hoje à lista");
+  confere(!(await pagina.isVisible("#btnHoje")), "depois de adicionada, o botão some");
+  confere(await pagina.locator("#tabelaChamada thead th", { hasText: (await pagina.evaluate((d) => dataBR(d).slice(0, 5), hoje)) }).count() === 1,
+    "a aula de hoje aparece como coluna na chamada (cartão 4)");
+  // Recolher o cartão de notas
+  const cartaoNotas = pagina.locator('section[data-cartao="notas"]');
+  await cartaoNotas.locator("h2 button").click();
+  confere(await cartaoNotas.evaluate((c) => c.classList.contains("recolhido")) && !(await pagina.isVisible("#tabelaNotas")),
+    "clicar no título recolhe o cartão (a tabela de notas some)");
+  confere(await cartaoNotas.locator("h2 button").getAttribute("aria-expanded") === "false", "o botão do título informa que está recolhido");
+  await pagina.reload();
+  // espera a página terminar de montar os cartões e a tabela de notas
+  await pagina.waitForFunction(() => document.querySelector('section[data-cartao="notas"] h2 button')
+    && document.querySelectorAll("#tabelaNotas tbody tr").length > 0);
+  confere(await pagina.locator('section[data-cartao="notas"]').evaluate((c) => c.classList.contains("recolhido")),
+    "depois de recarregar a página, continua recolhido");
+  confere(await pagina.isVisible("#nomeMateria") && await pagina.isVisible("#tabelaChamada"), "o nome da matéria e os outros cartões continuam à vista");
+  await pagina.locator('section[data-cartao="notas"] h2 button').click();
+  confere(await pagina.isVisible("#tabelaNotas"), "clicar de novo expande");
   await pagina.setViewportSize({ width: 390, height: 800 });
-  const tamanho = await botao(0, 0).boundingBox();
-  confere(tamanho.width >= 44 && tamanho.height >= 44, `no celular, botões grandes (${Math.round(tamanho.width)}×${Math.round(tamanho.height)} px)`);
   confere(!(await pagina.evaluate(() => document.documentElement.scrollWidth > innerWidth)), "no celular, sem rolagem para o lado");
-  const ordem = await pagina.evaluate(() => [document.getElementById("cartaoHoje").getBoundingClientRect().top,
-    document.querySelector(".lado-backup").getBoundingClientRect().top]);
-  confere(ordem[0] < ordem[1] && ordem[0] < 400, `no celular, a “Aula de hoje” vem antes do backup (topo em ${Math.round(ordem[0])} px)`);
   await pagina.setViewportSize({ width: 1400, height: 900 });
 
   // ===================================================================
