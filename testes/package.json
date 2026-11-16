@@ -1,0 +1,14 @@
+{
+  "name": "diario-de-classe-testes",
+  "private": true,
+  "description": "Testes automáticos do Diário de Classe (versão web)",
+  "scripts": {
+    "preparar": "python3 gerar_pdfs_falsos.py",
+    "test": "node testes.js"
+  },
+  "devDependencies": {
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "3.11.174",
+    "playwright": "^1.48.0"
+  }
+}
