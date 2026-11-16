@@ -44,6 +44,13 @@ const ALTURA_LINHA_ALUNO = 11.34;
 const COL_FALTAS = [705.8, 728.5];
 const COL_MEDIA_1BIM = [785.2, 807.9]; // coluna "MÉDIA" na página do 1º bimestre
 const COL_MEDIA_2BIM = [728.5, 754.0]; // coluna "2º BIM" na página do 2º bimestre
+const COL_EXAME = [754.0, 779.5];      // coluna "EXAME" na página do 2º bimestre
+const COL_FINAL = [779.5, 807.9];      // coluna "FINAL" na página do 2º bimestre
+
+// Regras de aprovação (as mesmas usadas pelo colega que dá aula há mais tempo):
+//   média anual >= 7 -> aprovado;  < 4 -> reprovado sem exame;  de 4 a 6,5 -> exame.
+const NOTA_APROVACAO = 7;
+const NOTA_MINIMA_EXAME = 4;
 
 // Página de conteúdo
 const CONTEUDO_PRIMEIRA_LINHA = 121.9;
@@ -266,17 +273,20 @@ function alunosDoPdf(paginas) {
  * {
  *   versao: 2,
  *   materiaAtual: "id-da-matéria-aberta",
+ *   inicio2bim: "2026-09-21",   // início do 2º bimestre: vale para TODAS as matérias
  *   nomePasta: "Diários Preenchidos - 2º bimestre",
  *   materias: [{
  *     id, nome: "Circuitos Elétricos",
- *     config:    { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "2026-04-01" },
+ *     config:    { composicao: {                  // como a média de cada bimestre é calculada
+ *                     1: [ { id: "prova", nome: "Prova", peso: "70" }, { id: "ativ", nome: "Atividades", peso: "30" } ],
+ *                     2: [ ... ] } },
  *     chave: "CIRCUITOS ELÉTRICOS II|2026/2",       // lida do cabeçalho do PDF
  *     turmas:    [ { id, nome: "GELET04N", codigo: "GELET04N", curso, arquivo: "doc (3).pdf",
  *                    alunos: [ { ra: "0000000001", nome: "FULANO ..." } ] } ],
  *     datas:     [ "2026-02-10", "2026-02-11", ... ],   // sempre em ordem
  *     presencas: { "0000000001": { "2026-02-10": "C", "2026-02-11": "CF" } },
  *     conteudos: { "2026-02-10": "Apresentação da disciplina" },
- *     notas:     { "0000000001": { p1: "7,5", a1: "8", p2: "", a2: "" } },
+ *     notas:     { "0000000001": { 1: { prova: "7,5", ativ: "8" }, 2: {}, ex: "6" } },  // componentes e exame
  *     ingressos: { "0000000001": "2026-03-10" },   // só as datas de ingresso digitadas à mão
  *     calendario: { de, ate, regras: { 3: { freq: "semanal" }, 4: { freq: "quinzenal", inicio } } }
  *   }],
@@ -292,12 +302,40 @@ function novoId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
+// Composição da nota de um bimestre quando nada foi configurado
+function composicaoPadrao() {
+  return [{ id: "prova", nome: "Prova", peso: "70" }, { id: "ativ", nome: "Atividades", peso: "30" }];
+}
+
+/*
+ * Converte o formato ANTIGO (peso da prova + peso das atividades, notas p1/a1/p2/a2)
+ * para o novo (lista de componentes). Os pesos antigos eram frações (0,7 e 0,3):
+ * viram porcentagens (70 e 30). As regras do diario.py são mantidas:
+ * peso da prova vazio/zero vale 1; peso das atividades vazio vale 0.
+ */
+function migrarPesosAntigos(config) {
+  const pp = paraNumero(config.pesoProva);
+  const pa = paraNumero(config.pesoAtiv);
+  let prova = pp && !Number.isNaN(pp) ? pp : 1;
+  let ativ = pa && !Number.isNaN(pa) ? pa : 0;
+  if (prova + ativ <= 1.0001) { // eram frações -> porcentagem (arredonda o "lixo" do 0,7 × 100 = 70,000...01)
+    prova = Math.round(prova * 100 * 1000) / 1000;
+    ativ = Math.round(ativ * 100 * 1000) / 1000;
+  }
+  const lista = () => [{ id: "prova", nome: "Prova", peso: String(prova) }, { id: "ativ", nome: "Atividades", peso: String(ativ) }];
+  return { 1: lista(), 2: lista() };
+}
+function migrarNotasAntigas(n) {
+  if (!n || !("p1" in n || "a1" in n || "p2" in n || "a2" in n)) return n;
+  return { 1: { prova: n.p1 ?? "", ativ: n.a1 ?? "" }, 2: { prova: n.p2 ?? "", ativ: n.a2 ?? "" } };
+}
+
 function novaMateria(nome = "Nova matéria") {
   return {
     id: novoId(),
     nome,
     chave: "", // "DISCIPLINA|SEMESTRE" lido do PDF: serve para achar a matéria de novo
-    config: { pesoProva: "0.7", pesoAtiv: "0.3", inicio2bim: "" },
+    config: { composicao: { 1: composicaoPadrao(), 2: composicaoPadrao() } },
     turmas: [],
     datas: [],
     presencas: {},
@@ -310,7 +348,7 @@ function novaMateria(nome = "Nova matéria") {
 
 function estadoVazio() {
   const m = novaMateria();
-  return { versao: 2, materiaAtual: m.id, nomePasta: PASTA_PADRAO, materias: [m] };
+  return { versao: 2, materiaAtual: m.id, inicio2bim: "", nomePasta: PASTA_PADRAO, materias: [m] };
 }
 
 // Garante que uma matéria tem todos os campos (backups antigos ou incompletos)
@@ -321,12 +359,12 @@ function normalizarMateria(obj) {
     id: obj.id || base.id,
     nome: String(obj.nome ?? base.nome),
     chave: String(obj.chave || ""),
-    config: { ...base.config, ...(obj.config || {}) },
+    config: { composicao: normalizarComposicao(obj.config) },
     turmas: Array.isArray(obj.turmas) ? obj.turmas : [],
     datas: Array.isArray(obj.datas) ? obj.datas.filter(ehDataValida) : [],
     presencas: obj.presencas || {},
     conteudos: obj.conteudos || {},
-    notas: obj.notas || {},
+    notas: Object.fromEntries(Object.entries(obj.notas || {}).map(([ra, n]) => [ra, migrarNotasAntigas(n) || {}])),
     calendario: { ...base.calendario, ...(obj.calendario || {}) },
     ingressos: obj.ingressos || {},
   };
@@ -345,6 +383,22 @@ function normalizarMateria(obj) {
   return m;
 }
 
+// Composição da nota de uma matéria (aceita o formato antigo de pesos)
+function normalizarComposicao(config = {}) {
+  const c = config.composicao;
+  if (!c) return "pesoProva" in config || "pesoAtiv" in config ? migrarPesosAntigos(config) : { 1: composicaoPadrao(), 2: composicaoPadrao() };
+  const limpa = (lista) => (Array.isArray(lista) ? lista : [])
+    .map((x) => ({ id: String(x.id || novoId()), nome: String(x.nome ?? ""), peso: String(x.peso ?? "0") }));
+  return { 1: limpa(c[1]), 2: limpa(c[2]) };
+}
+
+// A data que mais aparece numa lista (para juntar datas antigas, uma por matéria, em uma só)
+function maisComum(lista) {
+  const contagem = new Map();
+  for (const x of lista) contagem.set(x, (contagem.get(x) || 0) + 1);
+  return [...contagem].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
 /*
  * Aceita os dois formatos:
  *   - versão 2 (várias matérias), o atual;
@@ -361,10 +415,14 @@ function normalizarEstado(obj) {
         turmas: [{ nome: "Turma 1", alunos: obj.alunos }] }],
     };
   }
+  // Início do 2º bimestre: antes era um por matéria; agora é um só para todas.
+  // Em backups antigos, usamos a data mais comum entre as matérias.
+  const inicio2bim = ehDataValida(obj.inicio2bim) ? obj.inicio2bim
+    : maisComum(obj.materias.map((m) => m.config?.inicio2bim).filter(ehDataValida));
   const materias = obj.materias.map(normalizarMateria);
   if (!materias.length) materias.push(novaMateria());
   const atual = materias.some((m) => m.id === obj.materiaAtual) ? obj.materiaAtual : materias[0].id;
-  return { versao: 2, materiaAtual: atual, nomePasta: obj.nomePasta || PASTA_PADRAO, materias };
+  return { versao: 2, materiaAtual: atual, inicio2bim, nomePasta: obj.nomePasta || PASTA_PADRAO, materias };
 }
 
 let estado = carregarEstado();
@@ -530,29 +588,68 @@ function paraNumero(valor) {
   return Number(texto);
 }
 
-// Pesos, como no Python:  peso_prova = ... or 1   e   peso_ativ = ... or 0
-// (o "or" do Python troca vazio OU zero pelo valor padrão)
-function pesos(m) {
-  const pp = paraNumero(m.config.pesoProva);
-  const pa = paraNumero(m.config.pesoAtiv);
-  return {
-    pesoProva: pp && !Number.isNaN(pp) ? pp : 1,
-    pesoAtiv: pa && !Number.isNaN(pa) ? pa : 0,
-  };
+// Peso de um componente como número (vazio ou inválido = 0)
+function pesoDe(componente) {
+  const p = paraNumero(componente.peso);
+  return p && !Number.isNaN(p) ? p : 0;
+}
+const somaDosPesos = (lista) => lista.reduce((soma, c) => soma + pesoDe(c), 0);
+
+/*
+ * Arredonda PARA CIMA até o próximo múltiplo de 0,5 (o sistema da faculdade só
+ * aceita notas assim): 6,1 -> 6,5;  6,5 -> 6,5;  6,51 -> 7,0.
+ * O "Math.round(... * 1e6) / 1e6" limpa o "lixo" das contas com vírgula do
+ * computador: sem ele, um 6,5 guardado como 6,50000000001 viraria 7.
+ */
+function arredondarMeio(x) {
+  return Math.ceil(Math.round(x * 2 * 1e6) / 1e6) / 2;
 }
 
-// Média de um bimestre. Mesma regra do Python:
-//  - prova e atividades preenchidas -> média ponderada
-//  - só a prova, e peso das atividades = 0 -> a própria prova
-//  - senão -> sem média (null)
-function calcularMedia(m, prova, ativ) {
-  const { pesoProva, pesoAtiv } = pesos(m);
-  const p = paraNumero(prova);
-  const a = paraNumero(ativ);
-  if (Number.isNaN(p) || Number.isNaN(a)) return null;
-  if (p !== null && a !== null) return (p * pesoProva + a * pesoAtiv) / (pesoProva + pesoAtiv);
-  if (p !== null && pesoAtiv === 0) return p;
-  return null;
+/*
+ * Resultado do ano a partir das médias dos dois bimestres (já arredondadas):
+ *   anual = (média 1º + média 2º) ÷ 2, arredondada para cima de 0,5 em 0,5
+ *   - anual >= 7 ............ aprovado:  final = anual
+ *   - anual <  4 ............ reprovado: final = anual (não tem exame)
+ *   - 4 <= anual < 7 ........ EXAME:     final = (anual + exame) ÷ 2, arredondada
+ *                                         (sem a nota do exame, ainda não há final)
+ */
+function resultadoFinal(m1, m2, exameTexto) {
+  if (m1 === null || m2 === null) return { anual: null, precisaExame: false, exame: null, final: null };
+  const anual = arredondarMeio((m1 + m2) / 2);
+  if (anual >= NOTA_MINIMA_EXAME && anual < NOTA_APROVACAO) {
+    const exame = paraNumero(exameTexto);
+    const temExame = exame !== null && !Number.isNaN(exame);
+    return { anual, precisaExame: true, exame: temExame ? exame : null,
+      final: temExame ? arredondarMeio((anual + exame) / 2) : null };
+  }
+  return { anual, precisaExame: false, exame: null, final: anual };
+}
+
+/*
+ * Média de um bimestre = soma(nota × peso) ÷ soma dos pesos,
+ * arredondada para cima de 0,5 em 0,5.
+ *  - Componentes com peso 0 não entram (podem ficar em branco).
+ *  - Se faltar a nota de algum componente com peso > 0, ainda não há média (null).
+ * Detalhe: transformamos os pesos em frações ANTES da conta (70% -> 0,7). Assim,
+ * com Prova 70% e Atividades 30%, a conta é exatamente a do diario.py,
+ * (prova × 0,7 + ativ × 0,3) ÷ (0,7 + 0,3), e os arredondamentos batem.
+ */
+function calcularMedia(m, bim, notasDoBimestre = {}) {
+  const lista = m.config.composicao[bim] || [];
+  const soma = somaDosPesos(lista);
+  if (!(soma > 0)) return null;
+  let total = 0;
+  let somaFracoes = 0;
+  for (const c of lista) {
+    const peso = pesoDe(c);
+    if (!peso) continue;
+    const nota = paraNumero(notasDoBimestre[c.id]);
+    if (nota === null || Number.isNaN(nota)) return null;
+    const fracao = peso / soma;
+    total += nota * fracao;
+    somaFracoes += fracao;
+  }
+  return arredondarMeio(total / somaFracoes);
 }
 
 /*
@@ -598,7 +695,7 @@ function antesDoIngresso(ingresso, d) {
 
 // Separa as datas por bimestre (aulas antes do início do 2º vão para o 1º)
 function datasPorBimestre(m) {
-  const inicio = m.config.inicio2bim;
+  const inicio = estado.inicio2bim; // a mesma data para todas as matérias
   return {
     1: m.datas.filter((d) => !inicio || d < inicio),
     2: inicio ? m.datas.filter((d) => d >= inicio) : [],
@@ -606,7 +703,7 @@ function datasPorBimestre(m) {
 }
 
 function bimestreDaData(m, d) {
-  const inicio = m.config.inicio2bim;
+  const inicio = estado.inicio2bim;
   return inicio && d >= inicio ? 2 : 1;
 }
 
@@ -796,10 +893,17 @@ function desenharFrequencia(ctx, info, dados, avisos) {
 
     textoCentralizado(ctx, String(faltas), ...COL_FALTAS, topo, base);
 
-    const media = dados.medias.get(ra)?.[bim];
+    const notas = dados.medias.get(ra);
+    const media = notas?.[bim];
     if (media !== null && media !== undefined) {
       const col = bim === 1 ? COL_MEDIA_1BIM : COL_MEDIA_2BIM;
       textoCentralizado(ctx, formatarNota(media), ...col, topo, base);
+    }
+    // Só na página do 2º bimestre: EXAME (se o aluno precisou) e FINAL (em negrito)
+    if (bim === 2 && notas?.resultado) {
+      const { precisaExame, exame, final } = notas.resultado;
+      if (precisaExame && exame !== null) textoCentralizado(ctx, formatarNota(exame), ...COL_EXAME, topo, base);
+      if (final !== null) textoCentralizado(ctx, formatarNota(final), ...COL_FINAL, topo, base, ctx.helvBold);
     }
   }
 }
@@ -829,12 +933,19 @@ function desenharConteudo(ctx, info, dados, numeroInicial, avisos) {
   return numero;
 }
 
+// Cópia independente da configuração (para uma matéria nova começar igual a outra)
+function copiarConfig(config) {
+  return JSON.parse(JSON.stringify(config));
+}
+
 // Junta os dados da matéria no formato que as funções de desenho esperam
 // (é o que o ler_planilha() do Python devolve). Também valida tudo.
 function prepararDados(m, erros) {
-  if (!m.config.inicio2bim) erros.push("Preencha o 'Início do 2º bimestre' nas Configurações.");
-  for (const campo of ["pesoProva", "pesoAtiv"]) {
-    if (Number.isNaN(paraNumero(m.config[campo]))) erros.push("Peso inválido nas Configurações.");
+  if (!estado.inicio2bim) erros.push("Preencha o 'Início do 2º bimestre' (seção 2).");
+  for (const b of [1, 2]) {
+    for (const c of m.config.composicao[b]) {
+      if (Number.isNaN(paraNumero(c.peso))) erros.push(`Peso inválido no componente “${c.nome}” (${b}º bimestre).`);
+    }
   }
 
   const presencas = new Map();
@@ -844,10 +955,16 @@ function prepararDados(m, erros) {
     presencas.set(ra, m.presencas[ra] || {});
     ingressos.set(ra, dataIngresso(m, ra));
     const n = m.notas[ra] || {};
-    for (const campo of ["p1", "a1", "p2", "a2"]) {
-      if (Number.isNaN(paraNumero(n[campo]))) erros.push(`Nota inválida para ${nome || ra}: "${n[campo]}".`);
+    for (const b of [1, 2]) {
+      for (const c of m.config.composicao[b]) {
+        const valor = n[b]?.[c.id];
+        if (Number.isNaN(paraNumero(valor))) erros.push(`Nota inválida para ${nome || ra} (${c.nome}, ${b}º bim.): "${valor}".`);
+      }
     }
-    medias.set(ra, { 1: calcularMedia(m, n.p1, n.a1), 2: calcularMedia(m, n.p2, n.a2) });
+    if (Number.isNaN(paraNumero(n.ex))) erros.push(`Nota de exame inválida para ${nome || ra}: "${n.ex}".`);
+    const m1 = calcularMedia(m, 1, n[1]);
+    const m2 = calcularMedia(m, 2, n[2]);
+    medias.set(ra, { 1: m1, 2: m2, resultado: resultadoFinal(m1, m2, n.ex) });
   }
   return { datas: datasPorBimestre(m), presencas, medias, ingressos, conteudos: m.conteudos };
 }
@@ -1292,7 +1409,7 @@ async function importarPasta(arquivos) {
       m = novaMateria(cab.disciplina);
       m.chave = chave;
       // Facilidade: começa com os mesmos pesos/início do 2º bimestre de outra matéria
-      if (estado.materias[0]) m.config = { ...estado.materias[0].config };
+      if (estado.materias[0]) m.config = copiarConfig(estado.materias[0].config);
       estado.materias.push(m);
       novasMaterias++;
     }
@@ -1336,14 +1453,74 @@ async function removerTurma(t) {
   render();
 }
 
-// --- Configurações ---
+// --- Bimestres e composição da nota ---
 function renderConfig() {
   const m = materia();
-  $("cfgPesoProva").value = m.config.pesoProva;
-  $("cfgPesoAtiv").value = m.config.pesoAtiv;
-  $("cfgInicio2").value = m.config.inicio2bim;
-  marcarInvalido($("cfgPesoProva"));
-  marcarInvalido($("cfgPesoAtiv"));
+  $("cfgInicio2").value = estado.inicio2bim || "";
+  // Mostra onde termina o 1º bimestre nesta matéria
+  const pb = datasPorBimestre(m);
+  const ultima1 = pb[1][pb[1].length - 1];
+  $("infoBimestre").textContent = !estado.inicio2bim
+    ? "Defina a data: aulas antes dela vão para o 1º bimestre."
+    : `Nesta matéria: última aula do 1º bimestre ${ultima1 ? dataBR(ultima1) : "—"}; ` +
+      `${pb[2].length ? `1ª aula do 2º bimestre ${dataBR(pb[2][0])}` : "ainda sem aulas no 2º bimestre"}.`;
+  for (const b of [1, 2]) renderComposicao(m, b);
+}
+
+// Lista de componentes da nota de um bimestre: nome | peso % | ×
+function renderComposicao(m, bim) {
+  const lista = m.config.composicao[bim];
+  const caixa = $(`comp${bim}`);
+  caixa.replaceChildren();
+
+  const atualizarSoma = () => {
+    const soma = somaDosPesos(lista);
+    somaEl.textContent = `soma: ${String(Math.round(soma * 100) / 100).replace(".", ",")}%`;
+    somaEl.classList.toggle("erro-texto", Math.abs(soma - 100) > 0.001);
+    if (Math.abs(soma - 100) > 0.001) somaEl.textContent += " (o ideal é 100%)";
+  };
+
+  for (const c of lista) {
+    const nome = el("input", { type: "text", value: c.nome, placeholder: "Nome do componente" });
+    nome.setAttribute("aria-label", `Nome do componente (${bim}º bimestre)`);
+    nome.addEventListener("input", () => { c.nome = nome.value; salvar(); });
+    nome.addEventListener("change", renderNotas); // atualiza o título da coluna ao sair do campo
+
+    const peso = el("input", { type: "text", inputMode: "decimal", value: c.peso, className: "peso" });
+    peso.setAttribute("aria-label", `Peso de ${c.nome} (${bim}º bimestre)`);
+    peso.addEventListener("input", () => {
+      c.peso = peso.value;
+      marcarInvalido(peso);
+      atualizarSoma();
+      salvar();
+      renderNotas(); // as médias mudam
+    });
+    marcarInvalido(peso);
+
+    const remover = el("button", { type: "button", className: "botao", textContent: "×", title: "Remover componente" });
+    remover.addEventListener("click", () => {
+      const temNota = Object.values(m.notas).some((n) => (n[bim]?.[c.id] ?? "") !== "");
+      if (temNota && !confirm(`Remover “${c.nome}” do ${bim}º bimestre? As notas digitadas nele serão apagadas.`)) return;
+      m.config.composicao[bim] = lista.filter((x) => x !== c);
+      for (const n of Object.values(m.notas)) delete n[bim]?.[c.id];
+      salvar();
+      renderComposicao(m, bim);
+      renderNotas();
+    });
+    caixa.append(el("div", { className: "comp-linha" }, nome, peso, el("span", { textContent: "%" }), remover));
+  }
+
+  const adicionar = el("button", { type: "button", className: "botao", textContent: "+ componente" });
+  adicionar.addEventListener("click", () => {
+    lista.push({ id: novoId(), nome: "Nova nota", peso: "0" });
+    salvar();
+    renderComposicao(m, bim);
+    renderNotas();
+    caixa.querySelectorAll(".comp-linha input[type=text]:not(.peso)")[lista.length - 1]?.select();
+  });
+  const somaEl = el("span", { className: "dica" });
+  caixa.append(el("div", { className: "linha-botoes" }, adicionar, somaEl));
+  atualizarSoma();
 }
 
 // Borda vermelha se o campo tiver algo que não é número
@@ -1425,7 +1602,7 @@ function renderAulas() {
     return `${b}º bimestre: ${pb[b].length} dias (${cols} de ${MAX_COLUNAS} colunas)${alerta}`;
   });
   $("resumoBimestres").textContent = m.datas.length
-    ? resumo.join(" · ") + (m.config.inicio2bim ? "" : " — defina o início do 2º bimestre.")
+    ? resumo.join(" · ") + (estado.inicio2bim ? "" : " — defina o início do 2º bimestre (seção 2).")
     : "Nenhuma data ainda.";
 }
 
@@ -1591,32 +1768,69 @@ function renderNotas() {
   tabela.replaceChildren();
   if (!m.turmas.some((t) => t.alunos.length)) return;
 
-  tabela.append(el("thead", {}, el("tr", {},
-    ...["RA", "Nome", "Prova 1º", "Ativ. 1º", "Média 1º", "Prova 2º", "Ativ. 2º", "Média 2º"]
-      .map((t, i) => el("th", { className: i === 0 ? "fixo1" : i === 1 ? "fixo2" : "", textContent: t })))));
+  const comps = { 1: m.config.composicao[1], 2: m.config.composicao[2] };
 
+  // Cabeçalho em duas linhas:  RA | Nome | 1º bimestre (componentes + Média) | 2º bimestre (...)
+  const linha1 = el("tr", {},
+    el("th", { className: "fixo1", rowSpan: 2, textContent: "RA" }),
+    el("th", { className: "fixo2", rowSpan: 2, textContent: "Nome" }));
+  const linha2 = el("tr");
+  for (const b of [1, 2]) {
+    linha1.append(el("th", { className: `bim${b}`, colSpan: comps[b].length + 1, textContent: `${b}º bimestre` }));
+    for (const c of comps[b]) linha2.append(el("th", { className: `bim${b}`, textContent: `${c.nome} (${c.peso}%)` }));
+    linha2.append(el("th", { className: `bim${b}`, textContent: "Média" }));
+  }
+  linha1.append(el("th", { colSpan: 3, textContent: "Resultado" }));
+  linha2.append(el("th", { textContent: "Média anual" }),
+    el("th", { textContent: "Exame", title: `Só para média anual de ${NOTA_MINIMA_EXAME} até menos de ${NOTA_APROVACAO}` }),
+    el("th", { textContent: "Final" }));
+  tabela.append(el("thead", {}, linha1, linha2));
+
+  const totalColunas = comps[1].length + comps[2].length + 5;
   const corpo = el("tbody");
   for (const t of m.turmas) {
     corpo.append(el("tr", { className: "grupo-turma" },
-      el("th", { colSpan: 2, textContent: t.nome }), el("td", { colSpan: 6 })));
+      el("th", { colSpan: 2, textContent: t.nome }), el("td", { colSpan: totalColunas })));
     for (const { ra, nome } of t.alunos) {
-      m.notas[ra] ??= { p1: "", a1: "", p2: "", a2: "" };
+      m.notas[ra] ??= {};
       const n = m.notas[ra];
-      const celMedia = { 1: el("td"), 2: el("td") };
+      const celMedia = { 1: el("td", { className: "media" }), 2: el("td", { className: "media" }) };
+      const celAnual = el("td", { className: "media" });
+      const celFinal = el("td", { className: "media final" });
+      const exame = el("input", { type: "text", inputMode: "decimal", value: n.ex || "" });
+      exame.setAttribute("aria-label", `Exame de ${nome}`);
+      exame.addEventListener("input", () => {
+        n.ex = exame.value;
+        marcarInvalido(exame);
+        atualizarMedias();
+        salvar();
+      });
+      marcarInvalido(exame);
 
+      const formatar = (x) => (x === null ? "" : formatarNota(x));
       const atualizarMedias = () => {
-        for (const b of [1, 2]) {
-          const media = calcularMedia(m, n[`p${b}`], n[`a${b}`]);
-          celMedia[b].textContent = media === null ? "" : formatarNota(media);
-        }
+        const medias = { 1: calcularMedia(m, 1, n[1]), 2: calcularMedia(m, 2, n[2]) };
+        for (const b of [1, 2]) celMedia[b].textContent = formatar(medias[b]);
+        const r = resultadoFinal(medias[1], medias[2], n.ex);
+        celAnual.textContent = formatar(r.anual);
+        // O exame só fica liberado para quem precisa dele
+        exame.disabled = !r.precisaExame;
+        exame.placeholder = r.precisaExame ? "nota" : "—";
+        celFinal.textContent = formatar(r.final);
+        celFinal.title = r.anual === null ? "" : r.precisaExame
+          ? (r.final === null ? "Precisa de exame: digite a nota do exame" : "Final = (média anual + exame) ÷ 2")
+          : r.anual >= NOTA_APROVACAO ? "Aprovado" : "Reprovado (abaixo de 4: sem exame)";
+        celFinal.classList.toggle("reprovado", r.final !== null && r.final < NOTA_APROVACAO && !r.precisaExame);
       };
 
-      const campo = (chave) => {
-        const input = el("input", { type: "text", inputMode: "decimal", value: n[chave] || "" });
-        input.setAttribute("aria-label", `${chave} de ${nome}`);
+      // Campo de nota de um componente "c" no bimestre "b"
+      const campo = (b, c) => {
+        const input = el("input", { type: "text", inputMode: "decimal", value: n[b]?.[c.id] || "" });
+        input.setAttribute("aria-label", `${c.nome} (${b}º bim.) de ${nome}`);
         marcarInvalido(input);
         input.addEventListener("input", () => {
-          n[chave] = input.value;
+          n[b] ??= {};
+          n[b][c.id] = input.value;
           marcarInvalido(input);
           atualizarMedias();
           salvar();
@@ -1627,8 +1841,9 @@ function renderNotas() {
       corpo.append(el("tr", {},
         el("td", { className: "ra fixo1", textContent: ra }),
         el("td", { className: "nome fixo2", textContent: nome, title: nome }),
-        campo("p1"), campo("a1"), celMedia[1],
-        campo("p2"), campo("a2"), celMedia[2]));
+        ...comps[1].map((c) => campo(1, c)), celMedia[1],
+        ...comps[2].map((c) => campo(2, c)), celMedia[2],
+        celAnual, el("td", {}, exame), celFinal));
       atualizarMedias();
     }
   }
@@ -1676,7 +1891,7 @@ $("btnNovaMateria").addEventListener("click", () => {
   if (nome === null) return; // cancelou
   const m = novaMateria(nome.trim() || "Nova matéria");
   // Facilidade: copia os pesos e o início do 2º bimestre da matéria atual
-  m.config = { ...materia().config };
+  m.config = copiarConfig(materia().config);
   estado.materias.push(m);
   estado.materiaAtual = m.id;
   salvar();
@@ -1730,14 +1945,10 @@ $("arquivoPdf").addEventListener("change", async (evento) => {
 });
 
 // Configurações
-$("cfgPesoProva").addEventListener("input", (e) => {
-  materia().config.pesoProva = e.target.value; marcarInvalido(e.target); salvar(); renderNotas();
-});
-$("cfgPesoAtiv").addEventListener("input", (e) => {
-  materia().config.pesoAtiv = e.target.value; marcarInvalido(e.target); salvar(); renderNotas();
-});
+// Início do 2º bimestre: uma data só, para todas as matérias
 $("cfgInicio2").addEventListener("change", (e) => {
-  materia().config.inicio2bim = e.target.value; salvar(); renderAulas(); renderChamada();
+  estado.inicio2bim = ehDataValida(e.target.value) ? e.target.value : "";
+  salvar(); renderConfig(); renderAulas(); renderChamada();
 });
 
 // Período do gerador (guardado na matéria)
