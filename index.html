@@ -24,6 +24,7 @@
   <div class="layout">
     <!-- ============ BARRA LATERAL: MATÉRIAS ============ -->
     <aside class="lateral">
+      <div class="lado-topo">
       <h1>Diário de Classe</h1>
       <p class="aviso-privacidade">Tudo fica no seu navegador. Nada é enviado a lugar nenhum.</p>
 
@@ -37,7 +38,10 @@
       <span id="statusPasta" class="check"></span>
       <nav id="listaMaterias" class="lista-materias" aria-label="Matérias"></nav>
       <button type="button" class="botao largo" id="btnNovaMateria">+ Nova matéria</button>
+      </div>
 
+      <!-- No celular, este bloco vai para o fim da página (veja estilo.css) -->
+      <div class="lado-backup">
       <h2 class="titulo-lateral">Backup</h2>
       <button type="button" class="botao largo" id="btnExportar">Exportar backup (.json)</button>
       <label class="check"><input type="checkbox" id="backupComPdfs" checked> incluir os PDFs em branco</label>
@@ -47,9 +51,35 @@
         <input type="file" id="arquivoBackup" accept="application/json,.json" hidden>
       </label>
       <button type="button" class="botao largo perigo" id="btnApagarTudo">Apagar tudo</button>
+      <p class="versao">Diário de Classe <strong>v1.1</strong></p>
+      </div>
     </aside>
 
     <main>
+      <!-- ============ AULA DE HOJE: a chamada do dia, pensada para usar em sala ============ -->
+      <section class="cartao hoje" id="cartaoHoje">
+        <h2 id="tituloHoje">Aula de hoje</h2>
+        <div class="linha-botoes">
+          <button type="button" class="botao" id="hojeAnterior" aria-label="Aula anterior">◀</button>
+          <select id="hojeData" aria-label="Data da aula"></select>
+          <button type="button" class="botao" id="hojeProxima" aria-label="Próxima aula">▶</button>
+          <button type="button" class="botao" id="hojeAdicionar" hidden></button>
+        </div>
+        <div id="hojeCorpo">
+          <label class="conteudo-hoje">Conteúdo desta aula
+            <input type="text" id="hojeConteudo" placeholder="Ex.: Amplificadores operacionais — exercícios">
+          </label>
+          <div class="linha-botoes">
+            <button type="button" class="botao principal" id="hojeTodos">✓ Todos presentes</button>
+            <span id="hojeResumo" class="dica"></span>
+          </div>
+          <p class="dica">Toque em <strong>“Todos presentes”</strong> e depois na aula em que o aluno <strong>faltou</strong>
+            (cada toque alterna C ↔ F). Num aluno ainda sem chamada, o toque marca falta naquela aula e presença na outra.</p>
+          <div id="hojeLista" class="hoje-lista"></div>
+        </div>
+        <p id="hojeVazio" class="dica" hidden></p>
+      </section>
+
       <!-- ============ 1. MATÉRIA E TURMAS ============ -->
       <section class="cartao">
         <div class="linha-botoes espaco">
@@ -135,7 +165,10 @@
       <!-- ============ 5. NOTAS ============ -->
       <section class="cartao">
         <h2>5. Notas</h2>
-        <p class="dica">Aceita vírgula ou ponto (ex.: 7,5). Deixe em branco se ainda não tiver a nota.</p>
+        <p class="dica">Notas de 0 a 10, com vírgula ou ponto (ex.: 7,5). Deixe em branco se ainda não tiver a nota.
+          <strong>Enter</strong> (ou ↓) desce para o próximo aluno; <strong>Shift+Enter</strong> (ou ↑) sobe.
+          Dá para <strong>colar uma coluna (ou várias) do Excel</strong>: clique na 1ª célula e cole (Ctrl+V).</p>
+        <p id="statusNotas" class="dica" aria-live="polite"></p>
         <div class="rolagem"><table id="tabelaNotas" class="tabela"></table></div>
       </section>
 
@@ -151,12 +184,27 @@
         <div class="linha-botoes">
           <button type="button" class="botao principal" id="btnGerarMateria">Gerar diários desta matéria</button>
           <button type="button" class="botao principal" id="btnGerarTodas">Gerar diários de TODAS as matérias</button>
+          <button type="button" class="botao" id="btnPrevia">👁 Prévia do PDF</button>
           <button type="button" class="botao" id="btnTrocarPasta">Escolher outra pasta</button>
         </div>
         <ul id="avisos" class="avisos"></ul>
       </section>
     </main>
   </div>
+
+  <!-- Janela da prévia: mostra o diário preenchido de uma turma, sem salvar nada -->
+  <dialog id="dlgPrevia" class="previa" aria-labelledby="tituloPrevia">
+    <div class="linha-botoes espaco">
+      <h2 id="tituloPrevia">Prévia do diário</h2>
+      <div class="linha-botoes">
+        <label>Turma <select id="previaTurma"></select></label>
+        <button type="button" class="botao" id="previaFechar">Fechar</button>
+      </div>
+    </div>
+    <ul id="previaAvisos" class="avisos"></ul>
+    <p class="dica">É só uma prévia: nada é salvo. <a id="previaAbrir" href="#" target="_blank" rel="noopener">Abrir o PDF em outra aba</a> (para dar zoom ou imprimir).</p>
+    <div id="previaPaginas" class="previa-paginas" aria-label="Páginas do diário"></div>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

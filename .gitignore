@@ -3,3 +3,8 @@
 *.xlsx
 diario-backup-*.json
 __pycache__/
+
+# Testes: dependências e arquivos gerados (só dados falsos, mas não precisam ir para o GitHub)
+node_modules/
+testes/saida/
+testes/package-lock.json

@@ -596,6 +596,30 @@ function pesoDe(componente) {
 const somaDosPesos = (lista) => lista.reduce((soma, c) => soma + pesoDe(c), 0);
 
 /*
+ * Confere uma nota digitada. Devolve null se estiver tudo certo (ou vazia), ou
+ * { erro: true/false, texto } explicando o problema:
+ *   - erro (vermelho): não é número, ou está fora de 0 a 10 -> não entra na média;
+ *   - aviso (amarelo): só para o EXAME, que vai direto para o sistema da faculdade,
+ *     quando não é múltiplo de 0,5 (o sistema só aceita 0,0 / 0,5 / 1,0 ...).
+ */
+function problemaNota(valor, exigirMeio = false) {
+  const n = paraNumero(valor);
+  if (n === null) return null;
+  if (Number.isNaN(n)) return { erro: true, texto: "Não é um número" };
+  if (n < 0 || n > 10) return { erro: true, texto: "A nota deve estar entre 0 e 10" };
+  if (exigirMeio && Math.abs(n * 2 - Math.round(n * 2)) > 1e-9) {
+    return { erro: false, texto: "O sistema da faculdade só aceita múltiplos de 0,5" };
+  }
+  return null;
+}
+
+// Nota válida como número, ou null (vazia, inválida ou fora de 0 a 10)
+function notaValida(valor) {
+  const p = problemaNota(valor);
+  return p?.erro ? null : paraNumero(valor);
+}
+
+/*
  * Arredonda PARA CIMA até o próximo múltiplo de 0,5 (o sistema da faculdade só
  * aceita notas assim): 6,1 -> 6,5;  6,5 -> 6,5;  6,51 -> 7,0.
  * O "Math.round(... * 1e6) / 1e6" limpa o "lixo" das contas com vírgula do
@@ -617,8 +641,8 @@ function resultadoFinal(m1, m2, exameTexto) {
   if (m1 === null || m2 === null) return { anual: null, precisaExame: false, exame: null, final: null };
   const anual = arredondarMeio((m1 + m2) / 2);
   if (anual >= NOTA_MINIMA_EXAME && anual < NOTA_APROVACAO) {
-    const exame = paraNumero(exameTexto);
-    const temExame = exame !== null && !Number.isNaN(exame);
+    const exame = notaValida(exameTexto); // vazia ou inválida -> ainda sem exame
+    const temExame = exame !== null;
     return { anual, precisaExame: true, exame: temExame ? exame : null,
       final: temExame ? arredondarMeio((anual + exame) / 2) : null };
   }
@@ -643,8 +667,8 @@ function calcularMedia(m, bim, notasDoBimestre = {}) {
   for (const c of lista) {
     const peso = pesoDe(c);
     if (!peso) continue;
-    const nota = paraNumero(notasDoBimestre[c.id]);
-    if (nota === null || Number.isNaN(nota)) return null;
+    const nota = notaValida(notasDoBimestre[c.id]);
+    if (nota === null) return null; // falta nota (ou ela é inválida) -> ainda sem média
     const fracao = peso / soma;
     total += nota * fracao;
     somaFracoes += fracao;
@@ -958,10 +982,10 @@ function prepararDados(m, erros) {
     for (const b of [1, 2]) {
       for (const c of m.config.composicao[b]) {
         const valor = n[b]?.[c.id];
-        if (Number.isNaN(paraNumero(valor))) erros.push(`Nota inválida para ${nome || ra} (${c.nome}, ${b}º bim.): "${valor}".`);
+        if (problemaNota(valor)?.erro) erros.push(`Nota inválida para ${nome || ra} (${c.nome}, ${b}º bim.): "${valor}" — use de 0 a 10.`);
       }
     }
-    if (Number.isNaN(paraNumero(n.ex))) erros.push(`Nota de exame inválida para ${nome || ra}: "${n.ex}".`);
+    if (problemaNota(n.ex)?.erro) erros.push(`Nota de exame inválida para ${nome || ra}: "${n.ex}" — use de 0 a 10.`);
     const m1 = calcularMedia(m, 1, n[1]);
     const m2 = calcularMedia(m, 2, n[2]);
     medias.set(ra, { 1: m1, 2: m2, resultado: resultadoFinal(m1, m2, n.ex) });
@@ -1222,6 +1246,7 @@ function el(tag, props = {}, ...filhos) {
 // Desenha a tela inteira a partir do estado
 function render() {
   renderLateral();
+  renderHoje();
   renderMateria();
   renderConfig();
   renderCalendario();
@@ -1523,15 +1548,29 @@ function renderComposicao(m, bim) {
   atualizarSoma();
 }
 
+// Campo de nota: vermelho = erro (não entra na média); amarelo = aviso. A explicação aparece ao passar o mouse.
+function marcarNota(input, exigirMeio = false) {
+  const p = problemaNota(input.value, exigirMeio);
+  input.classList.toggle("invalido", Boolean(p?.erro));
+  input.classList.toggle("aviso", Boolean(p && !p.erro));
+  input.title = p?.texto || "";
+}
+
 // Borda vermelha se o campo tiver algo que não é número
 function marcarInvalido(input) {
   input.classList.toggle("invalido", Number.isNaN(paraNumero(input.value)));
 }
 
 // --- Gerador de datas: uma linha por dia da semana ---
+let materiaDoCalendario = null;
 function renderCalendario() {
   const cal = materia().calendario;
-  $("gerador").open = !materia().datas.length; // aberto só enquanto não há datas
+  // Ao trocar de matéria: gerador aberto só se ela ainda não tem datas. Depois, fica
+  // como você deixou (não fecha sozinho quando uma data é adicionada).
+  if (materiaDoCalendario !== materia().id) {
+    materiaDoCalendario = materia().id;
+    $("gerador").open = !materia().datas.length;
+  }
   $("gerDe").value = cal.de || "";
   $("gerAte").value = cal.ate || "";
   const corpo = $("gerDias");
@@ -1581,6 +1620,7 @@ function renderAulas() {
     campo.setAttribute("aria-label", `Conteúdo da aula de ${dataBR(d)}`);
     campo.addEventListener("input", () => {
       m.conteudos[d] = campo.value;
+      if (d === diaHoje) $("hojeConteudo").value = campo.value; // mantém a "Aula de hoje" igual
       salvar();
     });
     const remover = el("button", { type: "button", className: "remover", title: "Remover esta data", textContent: "×" });
@@ -1624,6 +1664,118 @@ function removerData(d) {
   for (const p of Object.values(m.presencas)) delete p[d];
   salvar();
   render();
+}
+
+/*
+ * ---------------- AULA DE HOJE ----------------
+ * Uma chamada por vez, com botões grandes (bom para o celular em sala).
+ * diaHoje = a data mostrada. Começa em: hoje (se for dia de aula), senão a
+ * última aula até hoje, senão a primeira aula da lista.
+ */
+let diaHoje = null;
+let materiaDoDia = null; // ao trocar de matéria, escolhemos o dia de novo
+
+function diaPadrao(m) {
+  const hoje = hojeISO();
+  if (m.datas.includes(hoje)) return hoje;
+  const passadas = m.datas.filter((d) => d <= hoje);
+  return passadas[passadas.length - 1] || m.datas[0] || null;
+}
+
+const nomeDia = (d) => `${DIA_SEMANA_NOME[new Date(paraUTC(d)).getUTCDay()]} ${dataBR(d)}`;
+
+function renderHoje() {
+  const m = materia();
+  if (materiaDoDia !== m.id || !m.datas.includes(diaHoje)) {
+    materiaDoDia = m.id;
+    diaHoje = diaPadrao(m);
+  }
+  $("tituloHoje").textContent = `Aula de hoje — ${m.nome || "matéria"}`;
+
+  // Botão para criar a aula de hoje, se ela ainda não está na lista
+  const hoje = hojeISO();
+  const botaoHoje = $("hojeAdicionar");
+  botaoHoje.hidden = m.datas.includes(hoje) || !m.turmas.length;
+  botaoHoje.textContent = `+ Dar aula hoje (${nomeDia(hoje)})`;
+
+  const semAlunos = !m.turmas.some((t) => t.alunos.length);
+  $("hojeCorpo").hidden = semAlunos || !diaHoje;
+  $("hojeVazio").hidden = !$("hojeCorpo").hidden;
+  $("hojeVazio").textContent = semAlunos
+    ? "Adicione as turmas (PDF em branco) para fazer a chamada aqui."
+    : "Nenhuma aula na lista ainda: use o botão acima ou a seção 3.";
+
+  // Lista de datas
+  const escolha = $("hojeData");
+  escolha.replaceChildren(...m.datas.map((d, i) =>
+    el("option", { value: d, textContent: `${nomeDia(d)} — aula ${i + 1}${d === hoje ? " (hoje)" : ""}` })));
+  escolha.disabled = !diaHoje;
+  if (!diaHoje || semAlunos) return;
+  escolha.value = diaHoje;
+  const pos = m.datas.indexOf(diaHoje);
+  $("hojeAnterior").disabled = pos <= 0;
+  $("hojeProxima").disabled = pos >= m.datas.length - 1;
+  $("hojeConteudo").value = m.conteudos[diaHoje] || "";
+
+  // Alunos, por turma, com dois botões (1ª e 2ª aula)
+  const lista = $("hojeLista");
+  lista.replaceChildren();
+  let presentes = 0, comFalta = 0, semChamada = 0;
+  for (const t of m.turmas) {
+    if (m.turmas.length > 1) lista.append(el("div", { className: "hoje-turma", textContent: t.nome }));
+    for (const { ra, nome } of t.alunos) {
+      const valor = m.presencas[ra]?.[diaHoje] || "";
+      const letras = letrasDoDia(valor);
+      const fora = antesDoIngresso(m.ingressos[ra], diaHoje); // ingresso digitado depois deste dia
+      if (!fora) {
+        if (!letras) semChamada++;
+        else if (letras.includes("F")) comFalta++;
+        else presentes++;
+      }
+      const f = contarFaltas(m, ra);
+      const quem = el("div", { className: "quem" },
+        el("span", { textContent: nome, title: nome }),
+        el("small", { textContent: fora ? `ingressa em ${dataBR(m.ingressos[ra])}` : `${ra} · faltas: ${f[1]} + ${f[2]}` }));
+      const linha = el("div", { className: "hoje-aluno" + (fora ? " fora" : "") }, quem);
+      for (const k of [0, 1]) {
+        const letra = letras ? letras[k] : "";
+        const botao = el("button", { type: "button", className: `aula-btn v-${letra}`, disabled: fora },
+          letra || "—", el("small", { textContent: `${k + 1}ª aula` }));
+        botao.setAttribute("aria-label", `${nome}, ${k + 1}ª aula: ${letra === "C" ? "presente" : letra === "F" ? "falta" : "sem chamada"}`);
+        botao.addEventListener("click", () => alternarAulaHoje(ra, k));
+        linha.append(botao);
+      }
+      const limpar = el("button", { type: "button", className: "limpar-btn", textContent: "×",
+        title: "Apagar a chamada deste aluno neste dia", hidden: !letras || fora });
+      limpar.setAttribute("aria-label", `Apagar a chamada de ${nome} neste dia`);
+      limpar.addEventListener("click", () => {
+        delete m.presencas[ra]?.[diaHoje];
+        salvar(); renderHoje(); renderChamada();
+      });
+      linha.append(limpar);
+      lista.append(linha);
+    }
+  }
+  const resumo = $("hojeResumo");
+  resumo.replaceChildren(`${presentes} presente(s) · ${comFalta} com falta`);
+  if (semChamada) resumo.append(" · ", el("span", { className: "sem-chamada", textContent: `${semChamada} sem chamada` }));
+}
+
+/*
+ * Toque num botão de aula (k = 0 para a 1ª, 1 para a 2ª): alterna C <-> F.
+ * Se o aluno ainda não tinha chamada nesse dia, partimos de "presente nas duas"
+ * e o toque marca a falta naquela aula (o caso comum: só se toca em quem faltou).
+ */
+function alternarAulaHoje(ra, k) {
+  const m = materia();
+  const letras = letrasDoDia(m.presencas[ra]?.[diaHoje]) || ["C", "C"];
+  letras[k] = letras[k] === "C" ? "F" : "C";
+  m.presencas[ra] ??= {};
+  // Volta ao formato guardado: "C", "F", "CF" ou "FC"
+  m.presencas[ra][diaHoje] = letras[0] === letras[1] ? letras[0] : letras.join("");
+  salvar();
+  renderHoje();
+  renderChamada();
 }
 
 // O botão mostra qual data ele vai adicionar, ex.: "+ Próxima aula: sex 20/11/2026"
@@ -1728,6 +1880,7 @@ function alternarPresenca(ra, d, botao) {
   // Se o mesmo aluno aparece em duas turmas, redesenha tudo; senão, só a célula
   const repetido = m.turmas.filter((t) => t.alunos.some((a) => a.ra === ra)).length > 1;
   // A 1ª presença mudou? Então muda o que fica "antes do ingresso": redesenha
+  if (d === diaHoje) renderHoje();
   if (repetido || dataIngresso(m, ra) !== ingressoAntes) return renderChamada();
   botao.className = `celula v-${proximo}`;
   botao.textContent = proximo;
@@ -1747,6 +1900,7 @@ function marcarTodosPresentes(d) {
   }
   salvar();
   renderChamada();
+  renderHoje();
 }
 
 // Conta as faltas (cada "F" = 1 aula perdida), por bimestre, a partir do ingresso
@@ -1788,6 +1942,7 @@ function renderNotas() {
 
   const totalColunas = comps[1].length + comps[2].length + 5;
   const corpo = el("tbody");
+  let linhaNotas = 0; // contador de alunos (linhas da "planilha" de notas)
   for (const t of m.turmas) {
     corpo.append(el("tr", { className: "grupo-turma" },
       el("th", { colSpan: 2, textContent: t.nome }), el("td", { colSpan: totalColunas })));
@@ -1801,11 +1956,11 @@ function renderNotas() {
       exame.setAttribute("aria-label", `Exame de ${nome}`);
       exame.addEventListener("input", () => {
         n.ex = exame.value;
-        marcarInvalido(exame);
+        marcarNota(exame, true);
         atualizarMedias();
         salvar();
       });
-      marcarInvalido(exame);
+      marcarNota(exame, true);
 
       const formatar = (x) => (x === null ? "" : formatarNota(x));
       const atualizarMedias = () => {
@@ -1827,29 +1982,88 @@ function renderNotas() {
       const campo = (b, c) => {
         const input = el("input", { type: "text", inputMode: "decimal", value: n[b]?.[c.id] || "" });
         input.setAttribute("aria-label", `${c.nome} (${b}º bim.) de ${nome}`);
-        marcarInvalido(input);
+        marcarNota(input);
         input.addEventListener("input", () => {
           n[b] ??= {};
           n[b][c.id] = input.value;
-          marcarInvalido(input);
+          marcarNota(input);
           atualizarMedias();
           salvar();
         });
         return el("td", {}, input);
       };
 
-      corpo.append(el("tr", {},
+      const linhaTabela = el("tr", {},
         el("td", { className: "ra fixo1", textContent: ra }),
         el("td", { className: "nome fixo2", textContent: nome, title: nome }),
         ...comps[1].map((c) => campo(1, c)), celMedia[1],
         ...comps[2].map((c) => campo(2, c)), celMedia[2],
-        celAnual, el("td", {}, exame), celFinal));
+        celAnual, el("td", {}, exame), celFinal);
+      // Numera os campos como numa planilha (linha, coluna): usado pelo Enter e pelo colar
+      linhaTabela.querySelectorAll("input").forEach((input, coluna) => {
+        input.dataset.linha = linhaNotas;
+        input.dataset.coluna = coluna;
+      });
+      linhaNotas++;
+      corpo.append(linhaTabela);
       atualizarMedias();
     }
   }
   tabela.append(corpo);
   tabela.style.setProperty("--larg-ra", `${tabela.querySelector("th.fixo1").offsetWidth}px`);
 }
+
+/*
+ * Notas como numa planilha:
+ *   - Enter ou ↓ desce para o mesmo campo do próximo aluno; Shift+Enter ou ↑ sobe.
+ *   - Colar várias células (copiadas do Excel/Planilhas) preenche a partir do campo
+ *     clicado: cada linha copiada vai para um aluno, cada coluna para um campo.
+ * Os campos têm data-linha e data-coluna (veja renderNotas).
+ */
+function campoNota(linha, coluna) {
+  return $("tabelaNotas").querySelector(`input[data-linha="${linha}"][data-coluna="${coluna}"]`);
+}
+
+$("tabelaNotas").addEventListener("keydown", (e) => {
+  const input = e.target;
+  if (!input.dataset?.linha) return;
+  const descer = (e.key === "Enter" && !e.shiftKey) || e.key === "ArrowDown";
+  const subir = (e.key === "Enter" && e.shiftKey) || e.key === "ArrowUp";
+  if (!descer && !subir) return;
+  e.preventDefault();
+  // Anda linha por linha, pulando campos desativados (ex.: exame de quem não precisa)
+  let linha = Number(input.dataset.linha);
+  for (;;) {
+    linha += descer ? 1 : -1;
+    const alvo = campoNota(linha, input.dataset.coluna);
+    if (!alvo) return;
+    if (!alvo.disabled) { alvo.focus(); alvo.select(); return; }
+  }
+});
+
+$("tabelaNotas").addEventListener("paste", (e) => {
+  const input = e.target;
+  if (!input.dataset?.linha) return;
+  const texto = e.clipboardData.getData("text/plain");
+  if (!/[\t\n]/.test(texto.trim())) return; // uma nota só: deixa o navegador colar normalmente
+  e.preventDefault();
+  // Excel separa colunas com TAB e linhas com quebra de linha
+  const linhas = texto.replace(/\r/g, "").replace(/\n+$/, "").split("\n").map((l) => l.split("\t"));
+  const linha0 = Number(input.dataset.linha);
+  const coluna0 = Number(input.dataset.coluna);
+  let coladas = 0, ignoradas = 0;
+  linhas.forEach((celulas, i) => {
+    celulas.forEach((valor, j) => {
+      const alvo = campoNota(linha0 + i, coluna0 + j);
+      if (!alvo || alvo.disabled) { if (valor.trim()) ignoradas++; return; }
+      alvo.value = valor.trim();
+      alvo.dispatchEvent(new Event("input", { bubbles: true })); // como se tivesse sido digitado
+      coladas++;
+    });
+  });
+  $("statusNotas").textContent = `${coladas} nota(s) colada(s)` +
+    (ignoradas ? `; ${ignoradas} ignorada(s) (sem campo correspondente ou exame não liberado).` : ".");
+});
 
 // --- Mensagens na seção "Gerar" ---
 // lista = [{ texto, erro }]  (ou só textos)
@@ -1973,6 +2187,29 @@ $("btnAddData").addEventListener("click", () => {
   adicionarDatas([d]);
 });
 
+// ---- Aula de hoje ----
+$("hojeData").addEventListener("change", (e) => { diaHoje = e.target.value; renderHoje(); });
+$("hojeAnterior").addEventListener("click", () => {
+  const m = materia();
+  diaHoje = m.datas[Math.max(0, m.datas.indexOf(diaHoje) - 1)];
+  renderHoje();
+});
+$("hojeProxima").addEventListener("click", () => {
+  const m = materia();
+  diaHoje = m.datas[Math.min(m.datas.length - 1, m.datas.indexOf(diaHoje) + 1)];
+  renderHoje();
+});
+$("hojeAdicionar").addEventListener("click", () => {
+  diaHoje = hojeISO();
+  adicionarDatas([diaHoje]); // redesenha tudo, já mostrando o dia de hoje
+});
+$("hojeTodos").addEventListener("click", () => marcarTodosPresentes(diaHoje));
+$("hojeConteudo").addEventListener("input", (e) => {
+  materia().conteudos[diaHoje] = e.target.value;
+  salvar();
+});
+$("hojeConteudo").addEventListener("change", renderAulas); // atualiza a lista da seção 3 ao sair do campo
+
 // Adicionar a próxima aula do calendário (depois da última da lista)
 $("btnProxima").addEventListener("click", () => {
   const proxima = proximaAula(materia());
@@ -2036,6 +2273,67 @@ $("btnTrocarPasta").addEventListener("click", async () => {
     if (erro.name !== "AbortError") alert(erro.message);
   }
 });
+
+// ---- Prévia do PDF: gera o diário de UMA turma e mostra na tela (não salva nada) ----
+let urlPrevia = null;
+
+async function atualizarPrevia() {
+  const m = materia();
+  const turma = m.turmas.find((t) => t.id === $("previaTurma").value);
+  const avisosEl = $("previaAvisos");
+  const mostrar = (lista) => avisosEl.replaceChildren(...lista.map(({ texto, erro }) =>
+    el("li", { className: erro ? "erro" : "", textContent: texto })));
+  mostrar([{ texto: "Gerando a prévia…" }]);
+  try {
+    const bytes = turma && await obterPdf(turma.id);
+    if (!bytes) return mostrar([{ texto: "O PDF em branco desta turma não está guardado. Use “Trocar PDF” na turma.", erro: true }]);
+    const erros = [];
+    const dados = prepararDados(m, erros); // mesmo com pendências, mostramos a prévia (com aviso)
+    const avisos = new Set();
+    const saida = await gerarPdfPreenchido(bytes, dados, avisos);
+    if (urlPrevia) URL.revokeObjectURL(urlPrevia);
+    urlPrevia = URL.createObjectURL(new Blob([saida], { type: "application/pdf" }));
+    $("previaAbrir").href = urlPrevia; // "Abrir o PDF em outra aba"
+    await desenharPaginas(saida);
+    mostrar([...new Set(erros)].map((t) => ({ texto: "Antes de gerar: " + t, erro: true }))
+      .concat([...avisos].map((t) => ({ texto: t }))));
+  } catch (erro) {
+    mostrar([{ texto: "Erro na prévia: " + erro.message, erro: true }]);
+  }
+}
+
+/*
+ * Desenha cada página do PDF numa "tela" (canvas) usando o pdf.js. Funciona igual
+ * em qualquer navegador, inclusive no celular (onde nem sempre há leitor de PDF).
+ */
+async function desenharPaginas(bytes) {
+  const quadro = $("previaPaginas");
+  quadro.replaceChildren();
+  const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+  const nitidez = window.devicePixelRatio || 1; // telas "retina" têm mais pontos por pixel
+  for (let n = 1; n <= doc.numPages; n++) {
+    const pagina = await doc.getPage(n);
+    const larguraDisponivel = Math.max(300, quadro.clientWidth - 30);
+    const escala = Math.min(1.6, larguraDisponivel / pagina.getViewport({ scale: 1 }).width);
+    const vista = pagina.getViewport({ scale: escala * nitidez });
+    const tela = el("canvas", { width: Math.floor(vista.width), height: Math.floor(vista.height) });
+    tela.style.width = `${Math.floor(vista.width / nitidez)}px`;
+    tela.setAttribute("aria-label", `Página ${n}`);
+    quadro.append(tela);
+    await pagina.render({ canvasContext: tela.getContext("2d"), viewport: vista }).promise;
+  }
+  await doc.destroy();
+}
+
+$("btnPrevia").addEventListener("click", () => {
+  const m = materia();
+  if (!m.turmas.length) return mostrarAvisos([{ texto: "Adicione uma turma (PDF em branco) primeiro.", erro: true }]);
+  $("previaTurma").replaceChildren(...m.turmas.map((t) => el("option", { value: t.id, textContent: t.nome })));
+  $("dlgPrevia").showModal(); // janela por cima da página (Esc fecha)
+  atualizarPrevia();
+});
+$("previaTurma").addEventListener("change", atualizarPrevia);
+$("previaFechar").addEventListener("click", () => $("dlgPrevia").close());
 
 // Gerar
 $("btnGerarMateria").addEventListener("click", () => gerarESalvar([materia()]));
