@@ -23,12 +23,21 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
 4. Preencha o peso da prova, o peso das atividades e o início do 2º bimestre.
 5. Adicione as datas: escolha o período e, para cada dia da semana, "toda semana" ou "quinzenal".
    Ex.: quarta toda semana + quinta quinzenal = semanas com 4 aulas e semanas com 2.
+   O botão **+ Próxima aula** adiciona a próxima data do calendário depois da última aula da lista
+   (ex.: matéria às sextas → a próxima sexta).
 6. Faça a chamada clicando nas células (vazio → C → F → CF → FC → vazio) e digite as notas.
+   **Ingresso:** antes da data de ingresso do aluno, o diário fica em branco e as faltas não contam.
+   Automático = 1ª presença. Para quem está desde o início e faltou as primeiras aulas (ou nunca veio
+   mas ganhou um "C"), digite a data certa na coluna "Ingresso". Sem nenhuma presença, tudo conta.
 7. **Gerar diários**: na primeira vez, escolha uma pasta do computador. O app cria dentro dela a
    subpasta "Diários Preenchidos - 2º bimestre" (o nome pode ser mudado) e salva um PDF por turma,
    chamado "Matéria - Turma.pdf". Fora do Chrome/Edge, os PDFs são baixados um por um.
 
 As datas, os conteúdos e os pesos são da matéria (valem para todas as turmas). A chamada e as notas são de cada aluno.
+
+Backup: no Chrome/Edge, **Exportar backup** grava na subpasta "Backup de diários" (dentro da mesma
+pasta escolhida para os diários), e um backup também é salvo toda vez que você gera os diários.
+Os arquivos têm data e hora no nome (ex.: `diario-backup-2026-11-16_14h05.json`).
 
 O progresso fica salvo no navegador. Use **Exportar backup** de vez em quando: o arquivo `.json`
 leva todas as matérias e, se a opção estiver marcada, os PDFs em branco. Com ele, dá para

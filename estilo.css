@@ -194,3 +194,9 @@ input.invalido { border-color: var(--erro); outline: 1px solid var(--erro); }
 
 /* Linha de título de cada turma dentro das tabelas */
 .tabela tr.grupo-turma th { text-align: left; background: var(--fundo); position: sticky; left: 0; }
+
+/* Chamada: coluna de ingresso e células antes do ingresso */
+.tabela td.ingresso { white-space: nowrap; }
+.tabela td.ingresso input { width: 128px; padding: 2px 4px; font-size: 0.8rem; }
+.tabela td.ingresso small { display: block; color: var(--suave); font-size: 0.7rem; }
+.celula.antes { opacity: 0.3; text-decoration: line-through; }

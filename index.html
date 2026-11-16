@@ -41,6 +41,7 @@
       <h2 class="titulo-lateral">Backup</h2>
       <button type="button" class="botao largo" id="btnExportar">Exportar backup (.json)</button>
       <label class="check"><input type="checkbox" id="backupComPdfs" checked> incluir os PDFs em branco</label>
+      <span id="statusBackup" class="check"></span>
       <label class="botao largo">
         Importar backup…
         <input type="file" id="arquivoBackup" accept="application/json,.json" hidden>
@@ -98,6 +99,8 @@
         <div class="linha-botoes">
           <input type="date" id="novaData" aria-label="Data avulsa">
           <button type="button" class="botao" id="btnAddData">Adicionar data avulsa</button>
+          <!-- Adiciona a próxima data do calendário da matéria (ex.: a próxima sexta) -->
+          <button type="button" class="botao" id="btnProxima">+ Próxima aula</button>
         </div>
         <p id="resumoBimestres" class="dica"></p>
         <div id="listaAulas"></div>
@@ -108,6 +111,9 @@
         <h2>4. Chamada</h2>
         <p class="dica">Clique na célula para alternar: vazio → C → F → CF → FC → vazio.
           (CF = presente na 1ª aula e faltou na 2ª.) O botão “C” no cabeçalho marca presença em todos os vazios do dia.</p>
+        <p class="dica"><strong>Ingresso:</strong> antes da data de ingresso, o diário fica em branco e as faltas não contam
+          (células apagadas). Automático = 1ª presença do aluno. Para um aluno que está desde o início e faltou as primeiras
+          aulas, ou que nunca veio mas ganhou um “C”, digite a data certa (ex.: a 1ª aula).</p>
         <div class="rolagem"><table id="tabelaChamada" class="tabela"></table></div>
       </section>
 

@@ -71,6 +71,7 @@ const DIAS_SEMANA = [[1, "Segunda"], [2, "Terça"], [3, "Quarta"], [4, "Quinta"]
 const CHAVE_ARMAZENAMENTO = "diario-de-classe:v2";
 const CHAVE_ANTIGA_V1 = "diario-de-classe:v1"; // formato da 1ª versão (uma matéria só)
 const PASTA_PADRAO = "Diários Preenchidos - 2º bimestre";
+const PASTA_BACKUP = "Backup de diários"; // criada dentro da mesma pasta escolhida para os PDFs
 
 // O pdf.js faz o trabalho pesado numa "thread" separada (o worker).
 // Precisamos dizer onde está o arquivo dele (mesma versão do pdf.min.js).
@@ -276,6 +277,7 @@ function alunosDoPdf(paginas) {
  *     presencas: { "0000000001": { "2026-02-10": "C", "2026-02-11": "CF" } },
  *     conteudos: { "2026-02-10": "Apresentação da disciplina" },
  *     notas:     { "0000000001": { p1: "7,5", a1: "8", p2: "", a2: "" } },
+ *     ingressos: { "0000000001": "2026-03-10" },   // só as datas de ingresso digitadas à mão
  *     calendario: { de, ate, regras: { 3: { freq: "semanal" }, 4: { freq: "quinzenal", inicio } } }
  *   }],
  *   pdfs: { "id-da-turma": "JVBERi0x..." }  // só no backup, e só se você marcar
@@ -302,6 +304,7 @@ function novaMateria(nome = "Nova matéria") {
     conteudos: {},
     notas: {},
     calendario: { de: "", ate: "", regras: {} },
+    ingressos: {},
   };
 }
 
@@ -325,6 +328,7 @@ function normalizarMateria(obj) {
     conteudos: obj.conteudos || {},
     notas: obj.notas || {},
     calendario: { ...base.calendario, ...(obj.calendario || {}) },
+    ingressos: obj.ingressos || {},
   };
   m.calendario.regras ||= {};
   m.turmas = m.turmas.map((t) => ({
@@ -573,6 +577,25 @@ function letrasDoDia(valor) {
   return valor.length === 1 ? Array(AULAS_POR_DIA).fill(valor) : valor.split("");
 }
 
+/*
+ * INGRESSO: alunos podem entrar na matéria depois do início das aulas.
+ * Antes da data de ingresso, o diário fica EM BRANCO e as faltas NÃO contam.
+ *   - Se você digitou a data de ingresso do aluno, vale ela.
+ *   - Senão, vale a 1ª presença dele (o 1º dia com algum "C").
+ *   - Sem nenhuma presença (e sem data digitada): não há como saber quando
+ *     ele entrou, então tudo conta normalmente.
+ */
+function primeiraPresenca(m, ra) {
+  return m.datas.find((d) => (letrasDoDia(m.presencas[ra]?.[d]) || []).includes("C")) || null;
+}
+function dataIngresso(m, ra) {
+  return m.ingressos[ra] || primeiraPresenca(m, ra);
+}
+// A data "d" é antes do ingresso? (datas "AAAA-MM-DD" se comparam como texto)
+function antesDoIngresso(ingresso, d) {
+  return Boolean(ingresso) && d < ingresso;
+}
+
 // Separa as datas por bimestre (aulas antes do início do 2º vão para o 1º)
 function datasPorBimestre(m) {
   const inicio = m.config.inicio2bim;
@@ -605,6 +628,34 @@ function gerarDatasCalendario(de, ate, regras) {
     }
   }
   return datas;
+}
+
+// Confere as regras do calendário. Devolve o texto do problema, ou "" se estiver tudo certo.
+function problemaNasRegras(regras) {
+  if (!Object.keys(regras).length) return "Escolha a frequência de pelo menos um dia da semana no calendário da matéria.";
+  for (const [num, regra] of Object.entries(regras)) {
+    if (regra.freq !== "quinzenal") continue;
+    const nome = DIAS_SEMANA.find(([n]) => n === Number(num))[1];
+    if (!regra.inicio) return `Informe a 1ª aula quinzenal de ${nome}.`;
+    if (new Date(paraUTC(regra.inicio)).getUTCDay() !== Number(num)) {
+      return `A 1ª aula quinzenal de ${nome} (${dataBR(regra.inicio)}) não cai numa ${nome.toLowerCase()}.`;
+    }
+  }
+  return "";
+}
+
+/*
+ * Próxima aula da matéria: a primeira data DEPOIS da última aula da lista que
+ * segue o calendário (ex.: toda sexta). Sem nenhuma aula ainda, começa no "De"
+ * do calendário (ou hoje). Procuramos em 4 semanas, o que cobre o quinzenal.
+ */
+function proximaAula(m) {
+  const { regras, de } = m.calendario;
+  if (problemaNasRegras(regras)) return null;
+  const ultima = m.datas[m.datas.length - 1];
+  const inicio = ultima ? deUTC(paraUTC(ultima) + UM_DIA) : (de || hojeISO());
+  const fim = deUTC(paraUTC(inicio) + 27 * UM_DIA);
+  return gerarDatasCalendario(inicio, fim, regras)[0] || null;
 }
 
 // Primeira data, a partir de "de", que cai no dia da semana pedido
@@ -732,8 +783,10 @@ function desenharFrequencia(ctx, info, dados, avisos) {
       continue;
     }
 
+    const ingresso = dados.ingressos.get(ra);
     let faltas = 0;
     colunas.forEach((d, i) => {
+      if (antesDoIngresso(ingresso, d)) return; // antes de entrar na matéria -> em branco, não conta
       const letras = registro[d] ? letrasDoDia(registro[d]) : null;
       if (letras === null) return; // sem chamada nesse dia -> deixa em branco
       const letra = letras[i % aulas]; // 1ª ou 2ª aula do dia
@@ -786,15 +839,17 @@ function prepararDados(m, erros) {
 
   const presencas = new Map();
   const medias = new Map();
+  const ingressos = new Map();
   for (const { ra, nome } of alunosDaMateria(m)) {
     presencas.set(ra, m.presencas[ra] || {});
+    ingressos.set(ra, dataIngresso(m, ra));
     const n = m.notas[ra] || {};
     for (const campo of ["p1", "a1", "p2", "a2"]) {
       if (Number.isNaN(paraNumero(n[campo]))) erros.push(`Nota inválida para ${nome || ra}: "${n[campo]}".`);
     }
     medias.set(ra, { 1: calcularMedia(m, n.p1, n.a1), 2: calcularMedia(m, n.p2, n.a2) });
   }
-  return { datas: datasPorBimestre(m), presencas, medias, conteudos: m.conteudos };
+  return { datas: datasPorBimestre(m), presencas, medias, ingressos, conteudos: m.conteudos };
 }
 
 // Igual a preencher() do Python: recebe o PDF em branco de UMA turma e os dados
@@ -954,6 +1009,35 @@ function baixarArquivo(conteudo, nome, tipo) {
 
 const esperar = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
+// Monta o texto do backup: TODAS as matérias (e, se marcado, os PDFs em branco)
+async function montarBackup() {
+  const copia = JSON.parse(JSON.stringify(estado)); // cópia "profunda" do estado
+  if ($("backupComPdfs").checked) {
+    copia.pdfs = {};
+    for (const m of estado.materias) {
+      for (const t of m.turmas) {
+        const bytes = await obterPdf(t.id);
+        if (bytes) copia.pdfs[t.id] = paraBase64(bytes);
+      }
+    }
+  }
+  return JSON.stringify(copia, null, 2);
+}
+
+// Nome com data e hora, para um backup não apagar o outro: diario-backup-2026-11-16_14h05.json
+function nomeBackup() {
+  const h = new Date();
+  const dois = (n) => String(n).padStart(2, "0");
+  return `diario-backup-${hojeISO()}_${dois(h.getHours())}h${dois(h.getMinutes())}.json`;
+}
+
+// Grava o backup na subpasta "Backup de diários" e devolve o caminho, para mostrar na tela
+async function gravarBackupNaPasta(pasta) {
+  const nome = nomeBackup();
+  const sub = await gravarNaPasta(pasta, PASTA_BACKUP, [{ nome, bytes: await montarBackup() }]);
+  return `${pasta.name}/${sub}/${nome}`;
+}
+
 // O que acontece ao clicar em "Gerar diários..."
 async function gerarESalvar(materias) {
   const botoes = [$("btnGerarMateria"), $("btnGerarTodas")];
@@ -979,7 +1063,15 @@ async function gerarESalvar(materias) {
     // 3) Grava na pasta (ou baixa um por um)
     if (pasta) {
       const nomeSub = await gravarNaPasta(pasta, estado.nomePasta || PASTA_PADRAO, arquivos);
-      mensagens.unshift({ texto: `${arquivos.length} diário(s) salvo(s) em “${pasta.name}/${nomeSub}”.` });
+      // Junto com os diários, um backup de tudo (se falhar, os diários já estão salvos)
+      let textoBackup;
+      try {
+        textoBackup = `Backup salvo em “${await gravarBackupNaPasta(pasta)}”.`;
+      } catch (erro) {
+        textoBackup = `Os diários foram salvos, mas o backup falhou: ${erro.message}`;
+      }
+      mensagens.unshift({ texto: `${arquivos.length} diário(s) salvo(s) em “${pasta.name}/${nomeSub}”.` },
+        { texto: textoBackup });
     } else {
       for (const { nome, bytes } of arquivos) {
         baixarArquivo(bytes, nome, "application/pdf");
@@ -1290,6 +1382,7 @@ function renderCalendario() {
       if (escolha.value === "nenhuma") delete cal.regras[num];
       else cal.regras[num] = { freq: escolha.value, inicio: inicio.value };
       salvar();
+      atualizarBotaoProxima(); // o calendário mudou: a próxima aula pode mudar
     };
     escolha.addEventListener("change", atualizar);
     inicio.addEventListener("change", atualizar);
@@ -1321,6 +1414,8 @@ function renderAulas() {
       el("span", { className: `etiqueta bim${bim}`, textContent: `${bim}º bim` }),
       campo, remover));
   });
+
+  atualizarBotaoProxima();
 
   // Resumo: quantas colunas cada bimestre ocupa (o diário tem 42 = 21 dias)
   const pb = datasPorBimestre(m);
@@ -1354,6 +1449,18 @@ function removerData(d) {
   render();
 }
 
+// O botão mostra qual data ele vai adicionar, ex.: "+ Próxima aula: sex 20/11/2026"
+function atualizarBotaoProxima() {
+  const m = materia();
+  const proxima = proximaAula(m);
+  const botao = $("btnProxima");
+  botao.disabled = !proxima;
+  botao.textContent = proxima
+    ? `+ Próxima aula: ${DIA_SEMANA_NOME[new Date(paraUTC(proxima)).getUTCDay()]} ${dataBR(proxima)}`
+    : "+ Próxima aula";
+  botao.title = proxima ? "" : (problemaNasRegras(m.calendario.regras) || "Nenhuma data encontrada nas próximas 4 semanas.");
+}
+
 // --- Chamada (alunos agrupados por turma) ---
 function renderChamada() {
   const m = materia();
@@ -1366,7 +1473,8 @@ function renderChamada() {
 
   // Cabeçalho: RA | Nome | uma coluna por data | Faltas 1º | Faltas 2º
   const cab = el("tr", {}, el("th", { className: "fixo1", textContent: "RA" }),
-    el("th", { className: "fixo2", textContent: "Nome" }));
+    el("th", { className: "fixo2", textContent: "Nome" }),
+    el("th", { textContent: "Ingresso", title: "Antes desta data o diário fica em branco e as faltas não contam" }));
   for (const d of m.datas) {
     const { dia, mes } = partesData(d);
     const botaoTodos = el("button", { type: "button", className: "botao mini", textContent: "C",
@@ -1384,14 +1492,18 @@ function renderChamada() {
     // Linha-título da turma
     corpo.append(el("tr", { className: "grupo-turma" },
       el("th", { colSpan: 2, textContent: `${t.nome} (${t.alunos.length} alunos)` }),
-      el("td", { colSpan: m.datas.length + 2 })));
+      el("td", { colSpan: m.datas.length + 3 })));
     for (const { ra, nome } of t.alunos) {
+      const ingresso = dataIngresso(m, ra);
       const linha = el("tr", {}, el("td", { className: "ra fixo1", textContent: ra }),
-        el("td", { className: "nome fixo2", textContent: nome, title: nome }));
+        el("td", { className: "nome fixo2", textContent: nome, title: nome }),
+        celulaIngresso(m, ra, nome));
       for (const d of m.datas) {
         const valor = m.presencas[ra]?.[d] || "";
-        const botao = el("button", { type: "button", className: `celula v-${valor}`, textContent: valor });
-        botao.setAttribute("aria-label", `${nome}, ${dataBR(d)}: ${valor || "vazio"}`);
+        const antes = antesDoIngresso(ingresso, d);
+        const botao = el("button", { type: "button", className: `celula v-${valor}${antes ? " antes" : ""}`, textContent: valor });
+        if (antes) botao.title = "Antes do ingresso: fica em branco no diário e não conta falta";
+        botao.setAttribute("aria-label", `${nome}, ${dataBR(d)}: ${valor || "vazio"}${antes ? " (antes do ingresso)" : ""}`);
         botao.addEventListener("click", () => alternarPresenca(ra, d, botao));
         linha.append(el("td", {}, botao));
       }
@@ -1406,9 +1518,30 @@ function renderChamada() {
   tabela.style.setProperty("--larg-ra", `${tabela.querySelector("th.fixo1").offsetWidth}px`);
 }
 
+/*
+ * Célula "Ingresso": um campo de data. Vazio = automático (1ª presença), e
+ * mostramos embaixo qual data o automático achou. Preenchido = vale a sua data.
+ */
+function celulaIngresso(m, ra, nome) {
+  const campo = el("input", { type: "date", value: m.ingressos[ra] || "" });
+  campo.setAttribute("aria-label", `Data de ingresso de ${nome}`);
+  campo.addEventListener("change", () => {
+    if (ehDataValida(campo.value)) m.ingressos[ra] = campo.value;
+    else delete m.ingressos[ra]; // apagou a data -> volta para o automático
+    salvar();
+    renderChamada();
+  });
+  const auto = primeiraPresenca(m, ra);
+  const dica = m.ingressos[ra]
+    ? "digitada"
+    : auto ? `auto: ${dataBR(auto).slice(0, 5)}` : "auto: sem presença";
+  return el("td", { className: "ingresso" }, campo, el("small", { textContent: dica }));
+}
+
 // Clique na célula: avança no ciclo vazio → C → F → CF → FC → vazio
 function alternarPresenca(ra, d, botao) {
   const m = materia();
+  const ingressoAntes = dataIngresso(m, ra);
   const atual = m.presencas[ra]?.[d] || "";
   const proximo = CICLO_CHAMADA[(CICLO_CHAMADA.indexOf(atual) + 1) % CICLO_CHAMADA.length];
   m.presencas[ra] ??= {}; // cria o objeto do aluno se ainda não existir
@@ -1417,7 +1550,8 @@ function alternarPresenca(ra, d, botao) {
   salvar();
   // Se o mesmo aluno aparece em duas turmas, redesenha tudo; senão, só a célula
   const repetido = m.turmas.filter((t) => t.alunos.some((a) => a.ra === ra)).length > 1;
-  if (repetido) return renderChamada();
+  // A 1ª presença mudou? Então muda o que fica "antes do ingresso": redesenha
+  if (repetido || dataIngresso(m, ra) !== ingressoAntes) return renderChamada();
   botao.className = `celula v-${proximo}`;
   botao.textContent = proximo;
   const linha = botao.closest("tr");
@@ -1429,6 +1563,8 @@ function alternarPresenca(ra, d, botao) {
 function marcarTodosPresentes(d) {
   const m = materia();
   for (const { ra } of alunosDaMateria(m)) {
+    // Aluno com data de ingresso digitada depois deste dia: não marca
+    if (antesDoIngresso(m.ingressos[ra], d)) continue;
     m.presencas[ra] ??= {};
     if (!m.presencas[ra][d]) m.presencas[ra][d] = "C";
   }
@@ -1436,10 +1572,12 @@ function marcarTodosPresentes(d) {
   renderChamada();
 }
 
-// Conta as faltas (cada "F" = 1 aula perdida), por bimestre
+// Conta as faltas (cada "F" = 1 aula perdida), por bimestre, a partir do ingresso
 function contarFaltas(m, ra) {
   const total = { 1: 0, 2: 0 };
+  const ingresso = dataIngresso(m, ra);
   for (const d of m.datas) {
+    if (antesDoIngresso(ingresso, d)) continue;
     const letras = letrasDoDia(m.presencas[ra]?.[d]);
     if (letras) total[bimestreDaData(m, d)] += letras.filter((l) => l === "F").length;
   }
@@ -1514,7 +1652,8 @@ function mostrarInfoPasta(pasta) {
       "(No Chrome ou no Edge, você escolhe uma pasta e o app cria a subpasta acima dentro dela.)";
     $("btnTrocarPasta").hidden = true;
   } else if (pasta) {
-    $("infoPasta").textContent = `Pasta escolhida: “${pasta.name}”. A subpasta acima será criada dentro dela.`;
+    $("infoPasta").textContent = `Pasta escolhida: “${pasta.name}”. A subpasta acima será criada dentro dela, ` +
+      `junto com a subpasta “${PASTA_BACKUP}” (um backup é salvo toda vez que você gera os diários).`;
   } else {
     $("infoPasta").textContent = "Na primeira vez, o navegador vai pedir para você escolher uma pasta do computador. " +
       "A subpasta acima será criada dentro dela.";
@@ -1610,15 +1749,8 @@ $("btnGerar").addEventListener("click", () => {
   const { de, ate, regras } = materia().calendario;
   if (!de || !ate) return alert("Preencha 'De' e 'até'.");
   if (ate < de) return alert("A data 'até' é antes da data 'De'.");
-  if (!Object.keys(regras).length) return alert("Escolha a frequência de pelo menos um dia da semana.");
-  for (const [num, regra] of Object.entries(regras)) {
-    const nome = DIAS_SEMANA.find(([n]) => n === Number(num))[1];
-    if (regra.freq !== "quinzenal") continue;
-    if (!regra.inicio) return alert(`Informe a 1ª aula quinzenal de ${nome}.`);
-    if (new Date(paraUTC(regra.inicio)).getUTCDay() !== Number(num)) {
-      return alert(`A 1ª aula quinzenal de ${nome} (${dataBR(regra.inicio)}) não cai numa ${nome.toLowerCase()}.`);
-    }
-  }
+  const problema = problemaNasRegras(regras);
+  if (problema) return alert(problema);
   const novas = adicionarDatas(gerarDatasCalendario(de, ate, regras));
   alert(`${novas} data(s) nova(s) adicionada(s).`);
 });
@@ -1630,19 +1762,27 @@ $("btnAddData").addEventListener("click", () => {
   adicionarDatas([d]);
 });
 
-// Exportar backup: TODAS as matérias (e, se marcado, os PDFs em branco)
+// Adicionar a próxima aula do calendário (depois da última da lista)
+$("btnProxima").addEventListener("click", () => {
+  const proxima = proximaAula(materia());
+  if (proxima) adicionarDatas([proxima]);
+});
+
+// Exportar backup: no Chrome/Edge, grava na subpasta "Backup de diários" da pasta
+// escolhida para os diários; nos outros navegadores, baixa o arquivo.
 $("btnExportar").addEventListener("click", async () => {
-  const copia = JSON.parse(JSON.stringify(estado));
-  if ($("backupComPdfs").checked) {
-    copia.pdfs = {};
-    for (const m of estado.materias) {
-      for (const t of m.turmas) {
-        const bytes = await obterPdf(t.id);
-        if (bytes) copia.pdfs[t.id] = paraBase64(bytes);
-      }
+  const status = $("statusBackup");
+  try {
+    if (podeEscolherPasta) {
+      const pasta = await obterPastaBase(); // 1º a pasta (o navegador exige que seja logo após o clique)
+      status.textContent = `Backup salvo em “${await gravarBackupNaPasta(pasta)}”.`;
+    } else {
+      baixarArquivo(await montarBackup(), nomeBackup(), "application/json");
+      status.textContent = "Backup baixado.";
     }
+  } catch (erro) {
+    status.textContent = erro.name === "AbortError" ? "Nenhuma pasta escolhida." : "Erro no backup: " + erro.message;
   }
-  baixarArquivo(JSON.stringify(copia, null, 2), `diario-backup-${hojeISO()}.json`, "application/json");
 });
 
 // Importar backup (substitui tudo)
