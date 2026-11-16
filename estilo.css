@@ -75,15 +75,8 @@ body {
 main { width: 100%; padding: 8px 20px 40px; } /* ocupa toda a largura da tela */
 .lado-topo, .lado-backup { display: flex; flex-direction: column; gap: 6px; }
 @media (max-width: 800px) {
-  /* Celular: matérias em cima (em linha, rolando para o lado), depois o conteúdo,
-     e o backup só no fim — assim a "Aula de hoje" aparece logo no começo. */
-  .layout { display: flex; flex-direction: column; }
-  .lateral { display: contents; }
-  .lado-topo { order: 0; padding: 14px 16px 6px; background: var(--cartao); border-bottom: 1px solid var(--borda); }
-  main { order: 1; }
-  .lado-backup { order: 2; padding: 0 16px 24px; }
-  .lista-materias { flex-direction: row; overflow-x: auto; padding-bottom: 4px; }
-  .aba-materia { flex: 0 0 auto; max-width: 220px; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .lateral { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--borda); }
 }
 
 .cartao {
@@ -229,30 +222,6 @@ input.invalido { border-color: var(--erro); outline: 1px solid var(--erro); }
 /* Versão no rodapé da barra lateral */
 .versao { margin-top: auto; padding-top: 12px; font-size: 0.75rem; color: var(--suave); }
 
-/* ---------- Aula de hoje (pensado para o celular em sala) ---------- */
-.cartao.hoje { border-color: var(--destaque); border-width: 2px; }
-.hoje select { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--borda);
-  background: var(--fundo); color: var(--texto); max-width: 100%; }
-.conteudo-hoje { display: flex; flex-direction: column; gap: 3px; font-size: 0.9rem; margin: 6px 0; }
-.conteudo-hoje input { width: 100%; }
-.hoje-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 6px 18px; }
-.hoje-turma { grid-column: 1 / -1; font-weight: 600; margin: 8px 0 0; }
-.hoje-aluno { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--borda); min-height: 52px; }
-.hoje-aluno .quem { flex: 1; min-width: 0; }
-.hoje-aluno .quem span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hoje-aluno .quem small { color: var(--suave); font-size: 0.75rem; }
-.hoje-aluno.fora { opacity: 0.45; }
-.aula-btn {
-  width: 52px; height: 44px; border-radius: 8px; border: 1px solid var(--borda);
-  font: inherit; font-weight: 700; font-size: 1.05rem; cursor: pointer;
-  background: var(--fundo); color: var(--suave);
-}
-.aula-btn small { display: block; font-size: 0.6rem; font-weight: 400; }
-.aula-btn.v-C { background: var(--c); color: var(--c-texto); border-color: transparent; }
-.aula-btn.v-F { background: var(--f); color: var(--f-texto); border-color: transparent; }
-.limpar-btn { border: none; background: none; color: var(--suave); cursor: pointer; font-size: 1.1rem; width: 28px; }
-.sem-chamada { color: var(--misto-texto); background: var(--misto); padding: 2px 8px; border-radius: 6px; }
-
 /* Notas: aviso (amarelo) para exame que não é múltiplo de 0,5 */
 input.aviso { border-color: var(--misto-texto); outline: 1px solid var(--misto-texto); }
 
@@ -270,3 +239,16 @@ dialog.previa select { font: inherit; padding: 4px; }
 dialog.previa .previa-paginas { flex: 1; overflow: auto; display: flex; flex-direction: column; align-items: center; gap: 12px;
   padding: 12px; background: var(--fundo); border: 1px solid var(--borda); border-radius: 6px; }
 dialog.previa canvas { background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / 0.25); max-width: 100%; }
+
+/* Nome da matéria no topo, fora dos cartões */
+.cabecalho-materia { margin: 14px 0 0; }
+
+/* Cartões recolhíveis: o título é um botão com uma seta */
+.cartao h2 .recolher {
+  all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%;
+}
+.cartao h2 .recolher:focus-visible { outline: 2px solid var(--destaque); outline-offset: 3px; border-radius: 4px; }
+.cartao .seta::before { content: "▾"; display: inline-block; width: 1em; color: var(--suave); }
+.cartao.recolhido .seta::before { content: "▸"; }
+.cartao.recolhido > :not(h2) { display: none; }
+.cartao.recolhido h2 { margin: 0; }

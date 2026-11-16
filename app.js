@@ -466,14 +466,23 @@ function carregarEstado() {
 let temporizadorSalvar = null;
 function salvar() {
   clearTimeout(temporizadorSalvar);
-  temporizadorSalvar = setTimeout(() => {
-    try {
-      localStorage.setItem(CHAVE_ARMAZENAMENTO, JSON.stringify(estado));
-    } catch (erro) {
-      alert("Não consegui salvar no navegador (modo anônimo?). Use 'Exportar backup'.");
-    }
-  }, 300);
+  temporizadorSalvar = setTimeout(salvarAgora, 300);
 }
+function salvarAgora() {
+  clearTimeout(temporizadorSalvar);
+  temporizadorSalvar = null;
+  try {
+    localStorage.setItem(CHAVE_ARMAZENAMENTO, JSON.stringify(estado));
+  } catch (erro) {
+    alert("Não consegui salvar no navegador (modo anônimo?). Use 'Exportar backup'.");
+  }
+}
+// Ao fechar/recarregar a página (ou trocar de aba no celular), grava na hora
+// o que ainda estava esperando os 300 ms — senão a última mudança se perderia.
+window.addEventListener("pagehide", () => { if (temporizadorSalvar) salvarAgora(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && temporizadorSalvar) salvarAgora();
+});
 
 // --- IndexedDB: um pouco verboso, então escondemos tudo nestas funções ---
 let promessaBanco = null;
@@ -1246,7 +1255,6 @@ function el(tag, props = {}, ...filhos) {
 // Desenha a tela inteira a partir do estado
 function render() {
   renderLateral();
-  renderHoje();
   renderMateria();
   renderConfig();
   renderCalendario();
@@ -1620,7 +1628,6 @@ function renderAulas() {
     campo.setAttribute("aria-label", `Conteúdo da aula de ${dataBR(d)}`);
     campo.addEventListener("input", () => {
       m.conteudos[d] = campo.value;
-      if (d === diaHoje) $("hojeConteudo").value = campo.value; // mantém a "Aula de hoje" igual
       salvar();
     });
     const remover = el("button", { type: "button", className: "remover", title: "Remover esta data", textContent: "×" });
@@ -1633,6 +1640,10 @@ function renderAulas() {
   });
 
   atualizarBotaoProxima();
+  // "+ Aula de hoje": só aparece se hoje ainda não está na lista de aulas
+  const hoje = hojeISO();
+  $("btnHoje").hidden = m.datas.includes(hoje);
+  $("btnHoje").textContent = `+ Aula de hoje (${DIA_SEMANA_NOME[new Date(paraUTC(hoje)).getUTCDay()]} ${dataBR(hoje)})`;
 
   // Resumo: quantas colunas cada bimestre ocupa (o diário tem 42 = 21 dias)
   const pb = datasPorBimestre(m);
@@ -1664,118 +1675,6 @@ function removerData(d) {
   for (const p of Object.values(m.presencas)) delete p[d];
   salvar();
   render();
-}
-
-/*
- * ---------------- AULA DE HOJE ----------------
- * Uma chamada por vez, com botões grandes (bom para o celular em sala).
- * diaHoje = a data mostrada. Começa em: hoje (se for dia de aula), senão a
- * última aula até hoje, senão a primeira aula da lista.
- */
-let diaHoje = null;
-let materiaDoDia = null; // ao trocar de matéria, escolhemos o dia de novo
-
-function diaPadrao(m) {
-  const hoje = hojeISO();
-  if (m.datas.includes(hoje)) return hoje;
-  const passadas = m.datas.filter((d) => d <= hoje);
-  return passadas[passadas.length - 1] || m.datas[0] || null;
-}
-
-const nomeDia = (d) => `${DIA_SEMANA_NOME[new Date(paraUTC(d)).getUTCDay()]} ${dataBR(d)}`;
-
-function renderHoje() {
-  const m = materia();
-  if (materiaDoDia !== m.id || !m.datas.includes(diaHoje)) {
-    materiaDoDia = m.id;
-    diaHoje = diaPadrao(m);
-  }
-  $("tituloHoje").textContent = `Aula de hoje — ${m.nome || "matéria"}`;
-
-  // Botão para criar a aula de hoje, se ela ainda não está na lista
-  const hoje = hojeISO();
-  const botaoHoje = $("hojeAdicionar");
-  botaoHoje.hidden = m.datas.includes(hoje) || !m.turmas.length;
-  botaoHoje.textContent = `+ Dar aula hoje (${nomeDia(hoje)})`;
-
-  const semAlunos = !m.turmas.some((t) => t.alunos.length);
-  $("hojeCorpo").hidden = semAlunos || !diaHoje;
-  $("hojeVazio").hidden = !$("hojeCorpo").hidden;
-  $("hojeVazio").textContent = semAlunos
-    ? "Adicione as turmas (PDF em branco) para fazer a chamada aqui."
-    : "Nenhuma aula na lista ainda: use o botão acima ou a seção 3.";
-
-  // Lista de datas
-  const escolha = $("hojeData");
-  escolha.replaceChildren(...m.datas.map((d, i) =>
-    el("option", { value: d, textContent: `${nomeDia(d)} — aula ${i + 1}${d === hoje ? " (hoje)" : ""}` })));
-  escolha.disabled = !diaHoje;
-  if (!diaHoje || semAlunos) return;
-  escolha.value = diaHoje;
-  const pos = m.datas.indexOf(diaHoje);
-  $("hojeAnterior").disabled = pos <= 0;
-  $("hojeProxima").disabled = pos >= m.datas.length - 1;
-  $("hojeConteudo").value = m.conteudos[diaHoje] || "";
-
-  // Alunos, por turma, com dois botões (1ª e 2ª aula)
-  const lista = $("hojeLista");
-  lista.replaceChildren();
-  let presentes = 0, comFalta = 0, semChamada = 0;
-  for (const t of m.turmas) {
-    if (m.turmas.length > 1) lista.append(el("div", { className: "hoje-turma", textContent: t.nome }));
-    for (const { ra, nome } of t.alunos) {
-      const valor = m.presencas[ra]?.[diaHoje] || "";
-      const letras = letrasDoDia(valor);
-      const fora = antesDoIngresso(m.ingressos[ra], diaHoje); // ingresso digitado depois deste dia
-      if (!fora) {
-        if (!letras) semChamada++;
-        else if (letras.includes("F")) comFalta++;
-        else presentes++;
-      }
-      const f = contarFaltas(m, ra);
-      const quem = el("div", { className: "quem" },
-        el("span", { textContent: nome, title: nome }),
-        el("small", { textContent: fora ? `ingressa em ${dataBR(m.ingressos[ra])}` : `${ra} · faltas: ${f[1]} + ${f[2]}` }));
-      const linha = el("div", { className: "hoje-aluno" + (fora ? " fora" : "") }, quem);
-      for (const k of [0, 1]) {
-        const letra = letras ? letras[k] : "";
-        const botao = el("button", { type: "button", className: `aula-btn v-${letra}`, disabled: fora },
-          letra || "—", el("small", { textContent: `${k + 1}ª aula` }));
-        botao.setAttribute("aria-label", `${nome}, ${k + 1}ª aula: ${letra === "C" ? "presente" : letra === "F" ? "falta" : "sem chamada"}`);
-        botao.addEventListener("click", () => alternarAulaHoje(ra, k));
-        linha.append(botao);
-      }
-      const limpar = el("button", { type: "button", className: "limpar-btn", textContent: "×",
-        title: "Apagar a chamada deste aluno neste dia", hidden: !letras || fora });
-      limpar.setAttribute("aria-label", `Apagar a chamada de ${nome} neste dia`);
-      limpar.addEventListener("click", () => {
-        delete m.presencas[ra]?.[diaHoje];
-        salvar(); renderHoje(); renderChamada();
-      });
-      linha.append(limpar);
-      lista.append(linha);
-    }
-  }
-  const resumo = $("hojeResumo");
-  resumo.replaceChildren(`${presentes} presente(s) · ${comFalta} com falta`);
-  if (semChamada) resumo.append(" · ", el("span", { className: "sem-chamada", textContent: `${semChamada} sem chamada` }));
-}
-
-/*
- * Toque num botão de aula (k = 0 para a 1ª, 1 para a 2ª): alterna C <-> F.
- * Se o aluno ainda não tinha chamada nesse dia, partimos de "presente nas duas"
- * e o toque marca a falta naquela aula (o caso comum: só se toca em quem faltou).
- */
-function alternarAulaHoje(ra, k) {
-  const m = materia();
-  const letras = letrasDoDia(m.presencas[ra]?.[diaHoje]) || ["C", "C"];
-  letras[k] = letras[k] === "C" ? "F" : "C";
-  m.presencas[ra] ??= {};
-  // Volta ao formato guardado: "C", "F", "CF" ou "FC"
-  m.presencas[ra][diaHoje] = letras[0] === letras[1] ? letras[0] : letras.join("");
-  salvar();
-  renderHoje();
-  renderChamada();
 }
 
 // O botão mostra qual data ele vai adicionar, ex.: "+ Próxima aula: sex 20/11/2026"
@@ -1880,7 +1779,6 @@ function alternarPresenca(ra, d, botao) {
   // Se o mesmo aluno aparece em duas turmas, redesenha tudo; senão, só a célula
   const repetido = m.turmas.filter((t) => t.alunos.some((a) => a.ra === ra)).length > 1;
   // A 1ª presença mudou? Então muda o que fica "antes do ingresso": redesenha
-  if (d === diaHoje) renderHoje();
   if (repetido || dataIngresso(m, ra) !== ingressoAntes) return renderChamada();
   botao.className = `celula v-${proximo}`;
   botao.textContent = proximo;
@@ -1900,7 +1798,6 @@ function marcarTodosPresentes(d) {
   }
   salvar();
   renderChamada();
-  renderHoje();
 }
 
 // Conta as faltas (cada "F" = 1 aula perdida), por bimestre, a partir do ingresso
@@ -2187,28 +2084,8 @@ $("btnAddData").addEventListener("click", () => {
   adicionarDatas([d]);
 });
 
-// ---- Aula de hoje ----
-$("hojeData").addEventListener("change", (e) => { diaHoje = e.target.value; renderHoje(); });
-$("hojeAnterior").addEventListener("click", () => {
-  const m = materia();
-  diaHoje = m.datas[Math.max(0, m.datas.indexOf(diaHoje) - 1)];
-  renderHoje();
-});
-$("hojeProxima").addEventListener("click", () => {
-  const m = materia();
-  diaHoje = m.datas[Math.min(m.datas.length - 1, m.datas.indexOf(diaHoje) + 1)];
-  renderHoje();
-});
-$("hojeAdicionar").addEventListener("click", () => {
-  diaHoje = hojeISO();
-  adicionarDatas([diaHoje]); // redesenha tudo, já mostrando o dia de hoje
-});
-$("hojeTodos").addEventListener("click", () => marcarTodosPresentes(diaHoje));
-$("hojeConteudo").addEventListener("input", (e) => {
-  materia().conteudos[diaHoje] = e.target.value;
-  salvar();
-});
-$("hojeConteudo").addEventListener("change", renderAulas); // atualiza a lista da seção 3 ao sair do campo
+// Adicionar a aula de hoje
+$("btnHoje").addEventListener("click", () => adicionarDatas([hojeISO()]));
 
 // Adicionar a próxima aula do calendário (depois da última da lista)
 $("btnProxima").addEventListener("click", () => {
@@ -2338,6 +2215,44 @@ $("previaFechar").addEventListener("click", () => $("dlgPrevia").close());
 // Gerar
 $("btnGerarMateria").addEventListener("click", () => gerarESalvar([materia()]));
 $("btnGerarTodas").addEventListener("click", () => gerarESalvar(estado.materias));
+
+/*
+ * ---------------- CARTÕES RECOLHÍVEIS ----------------
+ * Um clique no título do cartão recolhe/expande. O app lembra quais estão
+ * recolhidos (só neste navegador, para todas as matérias), numa lista em
+ * localStorage: ["aulas", "notas", ...] (o data-cartao de cada <section>).
+ */
+const CHAVE_RECOLHIDOS = "diario-de-classe:recolhidos";
+
+function lerRecolhidos() {
+  try { return new Set(JSON.parse(localStorage.getItem(CHAVE_RECOLHIDOS)) || []); }
+  catch { return new Set(); } // modo anônimo ou dado estragado: tudo aberto
+}
+
+function prepararCartoes() {
+  const recolhidos = lerRecolhidos();
+  for (const cartao of document.querySelectorAll("section.cartao[data-cartao]")) {
+    const titulo = cartao.querySelector("h2");
+    // O título vira um botão (assim funciona também pelo teclado: Tab + Enter)
+    const botao = el("button", { type: "button", className: "recolher" },
+      el("span", { className: "seta", ariaHidden: "true" }), ...titulo.childNodes);
+    titulo.replaceChildren(botao);
+    const aplicar = (recolher) => {
+      cartao.classList.toggle("recolhido", recolher);
+      botao.setAttribute("aria-expanded", String(!recolher));
+      botao.title = recolher ? "Expandir" : "Recolher";
+    };
+    aplicar(recolhidos.has(cartao.dataset.cartao));
+    botao.addEventListener("click", () => {
+      const atual = lerRecolhidos();
+      const recolher = !cartao.classList.contains("recolhido");
+      if (recolher) atual.add(cartao.dataset.cartao); else atual.delete(cartao.dataset.cartao);
+      aplicar(recolher);
+      try { localStorage.setItem(CHAVE_RECOLHIDOS, JSON.stringify([...atual])); } catch { /* só não lembra */ }
+    });
+  }
+}
+prepararCartoes();
 
 // Se as bibliotecas do CDN não carregaram (sem internet, bloqueio...), avisa
 if (!window.pdfjsLib || !window.PDFLib) {

@@ -35,7 +35,7 @@ O resultado termina com algo como `49 passaram, 0 falharam.`
    (letra por letra) fora das colunas de nota, que o app arredonda.
 3. **Notas:** arredondamento de 0,5 em 0,5, exame, final e validação de 0 a 10.
 4. **Digitar notas como numa planilha:** Enter/Shift+Enter e colar várias células do Excel.
-5. **Aula de hoje:** "Todos presentes", toques nas aulas, conteúdo e tamanho dos botões no celular.
+5. **Botão "+ Aula de hoje" e cartões recolhíveis** (inclusive se continuam recolhidos ao recarregar).
 6. **Datas:** quinzenal e "+ Próxima aula".
 7. **Ingresso do aluno, prévia e backup** (exportar, apagar tudo e importar).
 8. **Conversão de dados das versões antigas** e navegador sem "escolher pasta".
