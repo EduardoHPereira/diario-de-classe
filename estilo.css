@@ -70,7 +70,7 @@ body {
 .aba-materia small { display: block; opacity: .8; font-size: 0.75rem; }
 .botao.largo { width: 100%; text-align: center; }
 .check { font-size: 0.85rem; color: var(--suave); }
-main { max-width: 1200px; width: 100%; padding: 8px 16px 40px; }
+main { width: 100%; padding: 8px 20px 40px; } /* ocupa toda a largura da tela */
 @media (max-width: 800px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
   .lateral { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--borda); }
@@ -200,3 +200,13 @@ input.invalido { border-color: var(--erro); outline: 1px solid var(--erro); }
 .tabela td.ingresso input { width: 128px; padding: 2px 4px; font-size: 0.8rem; }
 .tabela td.ingresso small { display: block; color: var(--suave); font-size: 0.7rem; }
 .celula.antes { opacity: 0.3; text-decoration: line-through; }
+
+/* Composição da nota */
+.composicoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px 32px; }
+.composicoes h3 { font-size: 0.95rem; margin: 6px 0; }
+.comp-linha { display: flex; gap: 6px; align-items: center; margin: 4px 0; max-width: 520px; }
+.comp-linha input[type="text"] { flex: 1; min-width: 0; }
+.comp-linha input.peso { flex: 0 0 64px; text-align: right; }
+.comp-linha .botao { padding: 4px 10px; }
+.erro-texto { color: var(--erro); }
+.tabela td.media { font-weight: 600; }

@@ -68,16 +68,27 @@
           As datas e os conteúdos valem para todas as turmas; cada turma gera o seu próprio diário.</p>
       </section>
 
-      <!-- ============ 2. CONFIGURAÇÕES ============ -->
+      <!-- ============ 2. BIMESTRES E COMPOSIÇÃO DA NOTA ============ -->
       <section class="cartao">
-        <h2>2. Configurações</h2>
+        <h2>2. Bimestres e composição da nota</h2>
         <div class="grade-config">
-          <label>Peso da prova <input type="text" inputmode="decimal" id="cfgPesoProva"></label>
-          <label>Peso das atividades <input type="text" inputmode="decimal" id="cfgPesoAtiv"></label>
-          <label>Início do 2º bimestre <input type="date" id="cfgInicio2"></label>
+          <label>Início do 2º bimestre (vale para todas as matérias)
+            <input type="date" id="cfgInicio2">
+          </label>
         </div>
-        <p class="dica">Média = (prova × peso da prova + atividades × peso das atividades) ÷ (soma dos pesos).
-          Aulas antes do início do 2º bimestre vão para o 1º. Cada data vale 2 aulas (2 colunas no diário).</p>
+        <p id="infoBimestre" class="dica"></p>
+        <div class="composicoes">
+          <div>
+            <h3>Composição da nota — 1º bim.</h3>
+            <div id="comp1"></div>
+          </div>
+          <div>
+            <h3>Composição da nota — 2º bim.</h3>
+            <div id="comp2"></div>
+          </div>
+        </div>
+        <p class="dica">Média = soma(nota × peso) ÷ soma dos pesos. A média só aparece quando todas as notas
+          com peso maior que 0 estiverem preenchidas. A composição é desta matéria.</p>
       </section>
 
       <!-- ============ 3. DATAS E CONTEÚDO ============ -->

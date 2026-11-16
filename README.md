@@ -20,7 +20,10 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
    arquivos, fica o mais recente.
 3. Também dá para adicionar um PDF avulso numa matéria com **Adicionar turma**.
    Os alunos (RA e nome) são lidos do PDF, e o PDF fica guardado no navegador.
-4. Preencha o peso da prova, o peso das atividades e o início do 2º bimestre.
+4. Na seção 2, defina o **início do 2º bimestre** (uma data só, que vale para todas as matérias)
+   e a **composição da nota** de cada bimestre: componentes com nome e peso em % (ex.: Prova 70%,
+   Atividades 30%; use "+ componente" para acrescentar Trabalho, Lista etc.). A tabela de Notas
+   ganha uma coluna por componente e calcula a média: soma(nota × peso) ÷ soma dos pesos.
 5. Adicione as datas: escolha o período e, para cada dia da semana, "toda semana" ou "quinzenal".
    Ex.: quarta toda semana + quinta quinzenal = semanas com 4 aulas e semanas com 2.
    O botão **+ Próxima aula** adiciona a próxima data do calendário depois da última aula da lista
@@ -33,7 +36,7 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
    subpasta "Diários Preenchidos - 2º bimestre" (o nome pode ser mudado) e salva um PDF por turma,
    chamado "Matéria - Turma.pdf". Fora do Chrome/Edge, os PDFs são baixados um por um.
 
-As datas, os conteúdos e os pesos são da matéria (valem para todas as turmas). A chamada e as notas são de cada aluno.
+As datas, os conteúdos e a composição da nota são da matéria (valem para todas as turmas). A chamada e as notas são de cada aluno.
 
 Backup: no Chrome/Edge, **Exportar backup** grava na subpasta "Backup de diários" (dentro da mesma
 pasta escolhida para os diários), e um backup também é salvo toda vez que você gera os diários.
