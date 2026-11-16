@@ -44,6 +44,13 @@ const ALTURA_LINHA_ALUNO = 11.34;
 const COL_FALTAS = [705.8, 728.5];
 const COL_MEDIA_1BIM = [785.2, 807.9]; // coluna "MÉDIA" na página do 1º bimestre
 const COL_MEDIA_2BIM = [728.5, 754.0]; // coluna "2º BIM" na página do 2º bimestre
+const COL_EXAME = [754.0, 779.5];      // coluna "EXAME" na página do 2º bimestre
+const COL_FINAL = [779.5, 807.9];      // coluna "FINAL" na página do 2º bimestre
+
+// Regras de aprovação (as mesmas usadas pelo colega que dá aula há mais tempo):
+//   média anual >= 7 -> aprovado;  < 4 -> reprovado sem exame;  de 4 a 6,5 -> exame.
+const NOTA_APROVACAO = 7;
+const NOTA_MINIMA_EXAME = 4;
 
 // Página de conteúdo
 const CONTEUDO_PRIMEIRA_LINHA = 121.9;
@@ -279,7 +286,7 @@ function alunosDoPdf(paginas) {
  *     datas:     [ "2026-02-10", "2026-02-11", ... ],   // sempre em ordem
  *     presencas: { "0000000001": { "2026-02-10": "C", "2026-02-11": "CF" } },
  *     conteudos: { "2026-02-10": "Apresentação da disciplina" },
- *     notas:     { "0000000001": { 1: { prova: "7,5", ativ: "8" }, 2: {} } },  // nota de cada componente
+ *     notas:     { "0000000001": { 1: { prova: "7,5", ativ: "8" }, 2: {}, ex: "6" } },  // componentes e exame
  *     ingressos: { "0000000001": "2026-03-10" },   // só as datas de ingresso digitadas à mão
  *     calendario: { de, ate, regras: { 3: { freq: "semanal" }, 4: { freq: "quinzenal", inicio } } }
  *   }],
@@ -589,7 +596,38 @@ function pesoDe(componente) {
 const somaDosPesos = (lista) => lista.reduce((soma, c) => soma + pesoDe(c), 0);
 
 /*
- * Média de um bimestre = soma(nota × peso) ÷ soma dos pesos.
+ * Arredonda PARA CIMA até o próximo múltiplo de 0,5 (o sistema da faculdade só
+ * aceita notas assim): 6,1 -> 6,5;  6,5 -> 6,5;  6,51 -> 7,0.
+ * O "Math.round(... * 1e6) / 1e6" limpa o "lixo" das contas com vírgula do
+ * computador: sem ele, um 6,5 guardado como 6,50000000001 viraria 7.
+ */
+function arredondarMeio(x) {
+  return Math.ceil(Math.round(x * 2 * 1e6) / 1e6) / 2;
+}
+
+/*
+ * Resultado do ano a partir das médias dos dois bimestres (já arredondadas):
+ *   anual = (média 1º + média 2º) ÷ 2, arredondada para cima de 0,5 em 0,5
+ *   - anual >= 7 ............ aprovado:  final = anual
+ *   - anual <  4 ............ reprovado: final = anual (não tem exame)
+ *   - 4 <= anual < 7 ........ EXAME:     final = (anual + exame) ÷ 2, arredondada
+ *                                         (sem a nota do exame, ainda não há final)
+ */
+function resultadoFinal(m1, m2, exameTexto) {
+  if (m1 === null || m2 === null) return { anual: null, precisaExame: false, exame: null, final: null };
+  const anual = arredondarMeio((m1 + m2) / 2);
+  if (anual >= NOTA_MINIMA_EXAME && anual < NOTA_APROVACAO) {
+    const exame = paraNumero(exameTexto);
+    const temExame = exame !== null && !Number.isNaN(exame);
+    return { anual, precisaExame: true, exame: temExame ? exame : null,
+      final: temExame ? arredondarMeio((anual + exame) / 2) : null };
+  }
+  return { anual, precisaExame: false, exame: null, final: anual };
+}
+
+/*
+ * Média de um bimestre = soma(nota × peso) ÷ soma dos pesos,
+ * arredondada para cima de 0,5 em 0,5.
  *  - Componentes com peso 0 não entram (podem ficar em branco).
  *  - Se faltar a nota de algum componente com peso > 0, ainda não há média (null).
  * Detalhe: transformamos os pesos em frações ANTES da conta (70% -> 0,7). Assim,
@@ -611,7 +649,7 @@ function calcularMedia(m, bim, notasDoBimestre = {}) {
     total += nota * fracao;
     somaFracoes += fracao;
   }
-  return total / somaFracoes;
+  return arredondarMeio(total / somaFracoes);
 }
 
 /*
@@ -855,10 +893,17 @@ function desenharFrequencia(ctx, info, dados, avisos) {
 
     textoCentralizado(ctx, String(faltas), ...COL_FALTAS, topo, base);
 
-    const media = dados.medias.get(ra)?.[bim];
+    const notas = dados.medias.get(ra);
+    const media = notas?.[bim];
     if (media !== null && media !== undefined) {
       const col = bim === 1 ? COL_MEDIA_1BIM : COL_MEDIA_2BIM;
       textoCentralizado(ctx, formatarNota(media), ...col, topo, base);
+    }
+    // Só na página do 2º bimestre: EXAME (se o aluno precisou) e FINAL (em negrito)
+    if (bim === 2 && notas?.resultado) {
+      const { precisaExame, exame, final } = notas.resultado;
+      if (precisaExame && exame !== null) textoCentralizado(ctx, formatarNota(exame), ...COL_EXAME, topo, base);
+      if (final !== null) textoCentralizado(ctx, formatarNota(final), ...COL_FINAL, topo, base, ctx.helvBold);
     }
   }
 }
@@ -916,7 +961,10 @@ function prepararDados(m, erros) {
         if (Number.isNaN(paraNumero(valor))) erros.push(`Nota inválida para ${nome || ra} (${c.nome}, ${b}º bim.): "${valor}".`);
       }
     }
-    medias.set(ra, { 1: calcularMedia(m, 1, n[1]), 2: calcularMedia(m, 2, n[2]) });
+    if (Number.isNaN(paraNumero(n.ex))) erros.push(`Nota de exame inválida para ${nome || ra}: "${n.ex}".`);
+    const m1 = calcularMedia(m, 1, n[1]);
+    const m2 = calcularMedia(m, 2, n[2]);
+    medias.set(ra, { 1: m1, 2: m2, resultado: resultadoFinal(m1, m2, n.ex) });
   }
   return { datas: datasPorBimestre(m), presencas, medias, ingressos, conteudos: m.conteudos };
 }
@@ -1732,9 +1780,13 @@ function renderNotas() {
     for (const c of comps[b]) linha2.append(el("th", { className: `bim${b}`, textContent: `${c.nome} (${c.peso}%)` }));
     linha2.append(el("th", { className: `bim${b}`, textContent: "Média" }));
   }
+  linha1.append(el("th", { colSpan: 3, textContent: "Resultado" }));
+  linha2.append(el("th", { textContent: "Média anual" }),
+    el("th", { textContent: "Exame", title: `Só para média anual de ${NOTA_MINIMA_EXAME} até menos de ${NOTA_APROVACAO}` }),
+    el("th", { textContent: "Final" }));
   tabela.append(el("thead", {}, linha1, linha2));
 
-  const totalColunas = comps[1].length + comps[2].length + 2;
+  const totalColunas = comps[1].length + comps[2].length + 5;
   const corpo = el("tbody");
   for (const t of m.turmas) {
     corpo.append(el("tr", { className: "grupo-turma" },
@@ -1743,12 +1795,32 @@ function renderNotas() {
       m.notas[ra] ??= {};
       const n = m.notas[ra];
       const celMedia = { 1: el("td", { className: "media" }), 2: el("td", { className: "media" }) };
+      const celAnual = el("td", { className: "media" });
+      const celFinal = el("td", { className: "media final" });
+      const exame = el("input", { type: "text", inputMode: "decimal", value: n.ex || "" });
+      exame.setAttribute("aria-label", `Exame de ${nome}`);
+      exame.addEventListener("input", () => {
+        n.ex = exame.value;
+        marcarInvalido(exame);
+        atualizarMedias();
+        salvar();
+      });
+      marcarInvalido(exame);
 
+      const formatar = (x) => (x === null ? "" : formatarNota(x));
       const atualizarMedias = () => {
-        for (const b of [1, 2]) {
-          const media = calcularMedia(m, b, n[b]);
-          celMedia[b].textContent = media === null ? "" : formatarNota(media);
-        }
+        const medias = { 1: calcularMedia(m, 1, n[1]), 2: calcularMedia(m, 2, n[2]) };
+        for (const b of [1, 2]) celMedia[b].textContent = formatar(medias[b]);
+        const r = resultadoFinal(medias[1], medias[2], n.ex);
+        celAnual.textContent = formatar(r.anual);
+        // O exame só fica liberado para quem precisa dele
+        exame.disabled = !r.precisaExame;
+        exame.placeholder = r.precisaExame ? "nota" : "—";
+        celFinal.textContent = formatar(r.final);
+        celFinal.title = r.anual === null ? "" : r.precisaExame
+          ? (r.final === null ? "Precisa de exame: digite a nota do exame" : "Final = (média anual + exame) ÷ 2")
+          : r.anual >= NOTA_APROVACAO ? "Aprovado" : "Reprovado (abaixo de 4: sem exame)";
+        celFinal.classList.toggle("reprovado", r.final !== null && r.final < NOTA_APROVACAO && !r.precisaExame);
       };
 
       // Campo de nota de um componente "c" no bimestre "b"
@@ -1770,7 +1842,8 @@ function renderNotas() {
         el("td", { className: "ra fixo1", textContent: ra }),
         el("td", { className: "nome fixo2", textContent: nome, title: nome }),
         ...comps[1].map((c) => campo(1, c)), celMedia[1],
-        ...comps[2].map((c) => campo(2, c)), celMedia[2]));
+        ...comps[2].map((c) => campo(2, c)), celMedia[2],
+        celAnual, el("td", {}, exame), celFinal));
       atualizarMedias();
     }
   }

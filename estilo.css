@@ -210,3 +210,8 @@ input.invalido { border-color: var(--erro); outline: 1px solid var(--erro); }
 .comp-linha .botao { padding: 4px 10px; }
 .erro-texto { color: var(--erro); }
 .tabela td.media { font-weight: 600; }
+
+/* Resultado final */
+.tabela td.final { font-weight: 700; }
+.tabela td.final.reprovado { color: var(--erro); }
+.tabela input:disabled { opacity: 0.4; }

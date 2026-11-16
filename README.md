@@ -23,7 +23,11 @@ Existem duas versões, que geram **o mesmo PDF** (mesmas coordenadas, fontes e r
 4. Na seção 2, defina o **início do 2º bimestre** (uma data só, que vale para todas as matérias)
    e a **composição da nota** de cada bimestre: componentes com nome e peso em % (ex.: Prova 70%,
    Atividades 30%; use "+ componente" para acrescentar Trabalho, Lista etc.). A tabela de Notas
-   ganha uma coluna por componente e calcula a média: soma(nota × peso) ÷ soma dos pesos.
+   ganha uma coluna por componente e calcula a média: soma(nota × peso) ÷ soma dos pesos,
+   arredondada **para cima** de 0,5 em 0,5 (o sistema da faculdade só aceita notas assim: 6,1 → 6,5).
+   **Resultado:** média anual = (1º + 2º) ÷ 2, arredondada do mesmo jeito. 7 ou mais: aprovado;
+   abaixo de 4: reprovado; de 4 a 6,5: exame, e final = (média anual + exame) ÷ 2, arredondada.
+   No diário, a página do 2º bimestre recebe EXAME (só de quem fez) e FINAL (em negrito).
 5. Adicione as datas: escolha o período e, para cada dia da semana, "toda semana" ou "quinzenal".
    Ex.: quarta toda semana + quinta quinzenal = semanas com 4 aulas e semanas com 2.
    O botão **+ Próxima aula** adiciona a próxima data do calendário depois da última aula da lista
